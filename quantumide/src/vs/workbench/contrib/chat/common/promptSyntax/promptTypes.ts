@@ -5,16 +5,16 @@
 
 import { LanguageSelector } from '../../../../../editor/common/languageSelector.js';
 import { localize } from '../../../../../nls.js';
+import product from '../../../../../platform/product/common/product.js';
 
 /**
  * Documentation link for the reusable prompts feature.
  */
-export const PROMPT_DOCUMENTATION_URL = 'https://aka.ms/vscode-ghcp-prompt-snippets';
-export const INSTRUCTIONS_DOCUMENTATION_URL = 'https://aka.ms/vscode-ghcp-custom-instructions';
-export const AGENT_DOCUMENTATION_URL = 'https://aka.ms/vscode-ghcp-custom-chat-modes'; // todo
-export const SKILL_DOCUMENTATION_URL = 'https://aka.ms/vscode-agent-skills';
-// TODO: update link when available
-export const HOOK_DOCUMENTATION_URL = 'https://aka.ms/vscode-chat-hooks';
+export const PROMPT_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/customization/prompt-files';
+export const INSTRUCTIONS_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/customization/custom-instructions';
+export const AGENT_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/customization/custom-agents';
+export const SKILL_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/customization/agent-skills';
+export const HOOK_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/customization/hooks';
 
 /**
  * Language ID for the reusable prompt syntax.
@@ -164,7 +164,7 @@ export function getSourceDescription(source: PromptFileSource): string | undefin
 		case PromptFileSource.ClaudePersonal:
 			return localize('source.claudePersonal', "Global (only used by Claude agents)");
 		case PromptFileSource.UserData:
-			return localize('source.userData', "Global (roams with Settings Sync, only used by VS Code)");
+			return localize({ key: 'source.userData', comment: ['{0} is the application name'] }, "Global (roams with Settings Sync, only used by {0})", product.nameLong);
 		case PromptFileSource.ConfigWorkspace:
 			return localize('source.configWorkspace', "Workspace (contributed from settings)");
 		case PromptFileSource.ConfigPersonal:

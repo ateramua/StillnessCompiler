@@ -19,7 +19,7 @@ import { buildRemoteIndexCommandId } from './commands';
 
 const reauthenticateCommandId = '_copilot.workspaceIndex.signInAgain';
 
-const codebaseSemanticSearchDocsLink = 'https://aka.ms/vscode-copilot-workspace-remote-index';
+const codebaseSemanticSearchDocsLink = 'https://code.visualstudio.com/docs/copilot/reference/workspace-context';
 
 interface WorkspaceIndexStateReporter {
 	readonly onDidChangeIndexState: Event<void>;

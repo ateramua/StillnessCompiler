@@ -819,7 +819,7 @@ export class LiveOpenAIFetcher extends OpenAIFetcher {
 			return { type: 'failed', reason: `client not supported: ${text}` };
 		}
 		if (isClientError(response) && !response.headers.get('x-github-request-id')) {
-			const message = `Last response was a ${response.status} error and does not appear to originate from GitHub. Is a proxy or firewall intercepting this request? https://gh.io/copilot-firewall`;
+			const message = `Last response was a ${response.status} error and does not appear to originate from GitHub. Is a proxy or firewall intercepting this request? https://docs.github.com/en/copilot/reference/copilot-allowlist-reference`;
 			logger.error(this.logTargetService, message);
 			statusReporter.setWarning(message);
 			telemetryData.properties.error = `Response status was ${response.status} with no x-github-request-id header`;

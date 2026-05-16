@@ -9,6 +9,7 @@ import { localize } from '../../../../../nls.js';
 import { ICommandService, CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
 import { IChatEntitlementService } from '../../../../services/chat/common/chatEntitlementService.js';
+import product from '../../../../../platform/product/common/product.js';
 
 import { OPEN_WORKSPACE_IN_AGENTS_WINDOW_COMMAND_ID } from '../../common/constants.js';
 
@@ -65,7 +66,13 @@ export function createAgentsBanner(
 	telemetryService: ITelemetryService,
 ): IAgentsBannerResult {
 	const disposables = new DisposableStore();
-	const label = options.label ?? localize('agentsBanner.tryAgentsAppLabel', "Try out the new Agents window");
+	const defaultLabel = product.nameShort === 'QuantumIDE'
+		? localize(
+			{ key: 'agentsBanner.quantumideOpenAgentsWindow', comment: ['Opens the separate Agents application window; sidebar Copilot chat is unchanged unless hidden by layout.'] },
+			'Open Agents app (new window)',
+		)
+		: localize('agentsBanner.tryAgentsAppLabel', "Try out the new Agents window");
+	const label = options.label ?? defaultLabel;
 
 	const button = $('button.agents-banner-button', {
 		title: label,

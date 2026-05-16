@@ -476,7 +476,7 @@ function collectFetcherTelemetry(accessor: ServicesAccessor): void {
 			const key = library.replace(/-/g, '');
 			const requestStartTime = Date.now();
 			try {
-				const response = await sendRawTelemetry(fetcher, envService, extensionContext, 'GitHub.copilot-chat/fetcherTelemetryProbe', {});
+				const response = await sendRawTelemetry(fetcher, envService, extensionContext, `${EXTENSION_ID}/fetcherTelemetryProbe`, {});
 				probeResults[key] = `Status: ${response.status}`;
 				logService.debug(`Fetcher telemetry probe: ${library} ${probeResults[key]} (${Date.now() - requestStartTime}ms)`);
 			} catch (e) {
@@ -511,7 +511,7 @@ function collectFetcherTelemetry(accessor: ServicesAccessor): void {
 					remoteName: vscode.env.remoteName ?? 'none',
 					...probeResults,
 				};
-				const response = await sendRawTelemetry(fetcher, envService, extensionContext, 'GitHub.copilot-chat/fetcherTelemetry', properties);
+				const response = await sendRawTelemetry(fetcher, envService, extensionContext, `${EXTENSION_ID}/fetcherTelemetry`, properties);
 
 				logService.debug(`Fetcher telemetry: Succeeded in ${Date.now() - requestStartTime}ms using ${fetcher.getUserAgentLibrary()} with status ${response.status} (${response.statusText}).`);
 			} catch (e) {

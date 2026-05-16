@@ -327,6 +327,8 @@ class TrackedDocumentInfo extends Disposable {
 			if (source.category === 'ai' && source.kind === 'completion' && source.extensionId === 'github.copilot') { return 'inlineCompletionsCopilot'; }
 			if (source.category === 'ai' && source.kind === 'completion' && source.extensionId === 'github.copilot-chat' && source.providerId === 'completions') { return 'inlineCompletionsCopilot'; }
 			if (source.category === 'ai' && source.kind === 'completion' && source.extensionId === 'github.copilot-chat' && source.providerId === 'nes') { return 'inlineCompletionsNES'; }
+			if (source.category === 'ai' && source.kind === 'completion' && source.extensionId === 'quantumide.personal-chat' && source.providerId === 'completions') { return 'inlineCompletionsCopilot'; }
+			if (source.category === 'ai' && source.kind === 'completion' && source.extensionId === 'quantumide.personal-chat' && source.providerId === 'nes') { return 'inlineCompletionsNES'; }
 			if (source.category === 'ai' && source.kind === 'completion') { return 'inlineCompletionsOther'; }
 
 			if (source.category === 'ai') { return 'otherAI'; }

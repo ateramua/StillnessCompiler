@@ -12,7 +12,7 @@ import { ICompletionsNotificationSender } from '../notificationSender';
 const CERTIFICATE_ERRORS = ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_SIGNATURE_FAILURE'];
 const errorMsg =
 	'Your proxy connection requires a trusted certificate. Please make sure the proxy certificate and any issuers are configured correctly and trusted by your operating system.';
-const learnMoreLink = 'https://gh.io/copilot-network-errors';
+const learnMoreLink = 'https://docs.github.com/en/copilot/how-tos/troubleshoot-copilot/troubleshoot-network-errors';
 
 export const ICompletionsUserErrorNotifierService = createServiceIdentifier<ICompletionsUserErrorNotifierService>('ICompletionsUserErrorNotifierService');
 export interface ICompletionsUserErrorNotifierService {

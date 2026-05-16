@@ -19,7 +19,7 @@ index 19747c8bd..67c166dc6 100644
 -	},
 +
  	"bugs": {
- 		"url": "https://aka.ms/microsoft/vscode-copilot-release"
+ 		"url": "https://github.com/microsoft/vscode-copilot-release/issues"
  	},
 @@ -25,6 +19,10 @@
  		"npm": ">=9.0.0",

@@ -150,7 +150,7 @@ import product from '../../platform/product/common/product.js';
 				'maximum': 120,
 				'included': !isWindows,
 				'scope': ConfigurationScope.APPLICATION,
-				'markdownDescription': localize('application.shellEnvironmentResolutionTimeout', "Controls the timeout in seconds before giving up resolving the shell environment when the application is not already launched from a terminal. See our [documentation](https://go.microsoft.com/fwlink/?linkid=2149667) for more information.")
+				'markdownDescription': localize('application.shellEnvironmentResolutionTimeout', "Controls the timeout in seconds before giving up resolving the shell environment when the application is not already launched from a terminal. See our [documentation](https://code.visualstudio.com/docs/supporting/faq#_resolving-shell-environment-fails) for more information.")
 			}
 		}
 	});
@@ -450,11 +450,11 @@ import product from '../../platform/product/common/product.js';
 			},
 			'disable-chromium-sandbox': {
 				type: 'boolean',
-				description: localize('argv.disableChromiumSandbox', "Disables the Chromium sandbox. This is useful when running VS Code as elevated on Linux and running under Applocker on Windows.")
+				description: localize('argv.disableChromiumSandbox', "Disables the Chromium sandbox. This is useful when running {0} as elevated on Linux and running under Applocker on Windows.", product.nameLong)
 			},
 			'use-inmemory-secretstorage': {
 				type: 'boolean',
-				description: localize('argv.useInMemorySecretStorage', "Ensures that an in-memory store will be used for secret storage instead of using the OS's credential store. This is often used when running VS Code extension tests or when you're experiencing difficulties with the credential store.")
+				description: localize('argv.useInMemorySecretStorage', "Ensures that an in-memory store will be used for secret storage instead of using the OS's credential store. This is often used when running {0} extension tests or when you're experiencing difficulties with the credential store.", product.nameLong)
 			},
 			'remote-debugging-port': {
 				type: 'string',

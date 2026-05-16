@@ -42,10 +42,24 @@ async function ensureCompiled() {
 	}
 }
 
+/** Built-in chat extension (extensions/copilot) uses esbuild; root `compile` does not emit `dist/`. */
+async function ensureCopilotExtensionCompiled() {
+	const copilotDistMain = path.join(rootDir, 'extensions', 'copilot', 'dist', 'extension.js');
+	try {
+		await fs.access(copilotDistMain);
+		return;
+	} catch {
+		// missing dist — extension activation would fail
+	}
+	console.log('[preLaunch] Building built-in chat extension (extensions/copilot → dist/)...');
+	await runProcess(npm, ['--prefix', 'extensions/copilot', 'run', 'compile']);
+}
+
 async function main() {
 	await ensureNodeModules();
 	await getElectron();
 	await ensureCompiled();
+	await ensureCopilotExtensionCompiled();
 
 	// Can't require this until after dependencies are installed
 	const { getBuiltInExtensions } = await import('./builtInExtensions.ts');

@@ -2005,15 +2005,21 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
 			}
 		}
 
-		deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
-			disallowInstall: true,
-			extension: {
-				id: this.productService.defaultChatAgent.chatExtensionId,
-				displayName: 'GitHub Copilot Chat',
-				autoMigrate: { storage: false, donotDisable: true },
-				preRelease: this.productService.quality !== 'stable'
+		const defaultChatAgent = this.productService.defaultChatAgent;
+		if (defaultChatAgent) {
+			const { extensionId, chatExtensionId } = defaultChatAgent;
+			if (extensionId.toLowerCase() !== chatExtensionId.toLowerCase()) {
+				deprecated[extensionId.toLowerCase()] = {
+					disallowInstall: true,
+					extension: {
+						id: chatExtensionId,
+						displayName: 'GitHub Copilot Chat',
+						autoMigrate: { storage: false, donotDisable: true },
+						preRelease: this.productService.quality !== 'stable'
+					}
+				};
 			}
-		};
+		}
 
 		return { malicious, deprecated, search, autoUpdate };
 	}

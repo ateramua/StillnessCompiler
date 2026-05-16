@@ -39,6 +39,7 @@ import { workspaceIcon, userIcon, mcpServerIcon, builtinIcon, pluginIcon, extens
 import { formatDisplayName, truncateToFirstLine } from './aiCustomizationListWidget.js';
 import { getDefaultHoverDelegate } from '../../../../../base/browser/ui/hover/hoverDelegateFactory.js';
 import { IHoverService } from '../../../../../platform/hover/browser/hover.js';
+import product from '../../../../../platform/product/common/product.js';
 import { IAICustomizationWorkspaceService } from '../../common/aiCustomizationWorkspaceService.js';
 import { CustomizationGroupHeaderRenderer, ICustomizationGroupHeaderEntry, CUSTOMIZATION_GROUP_HEADER_HEIGHT, CUSTOMIZATION_GROUP_HEADER_HEIGHT_WITH_SEPARATOR } from './customizationGroupHeaderRenderer.js';
 import { AgentPluginItemKind, IAgentPluginItem } from '../agentPluginEditor/agentPluginItems.js';
@@ -49,7 +50,7 @@ const MCP_ITEM_HEIGHT = 36;
 
 const PLUGIN_COLLECTION_PREFIX = 'plugin.';
 
-const COPILOT_EXTENSION_IDS = ['github.copilot', 'github.copilot-chat'];
+const COPILOT_EXTENSION_IDS = ['github.copilot', 'github.copilot-chat', 'quantumide.personal-chat'];
 
 function isCopilotExtension(id: ExtensionIdentifier): boolean {
 	return COPILOT_EXTENSION_IDS.some(copilotId => ExtensionIdentifier.equals(id, copilotId));
@@ -795,7 +796,7 @@ export class McpListWidget extends Disposable {
 		}
 
 		// Add plugin-provided, extension-provided, and built-in servers.
-		// Servers from the Copilot extension (github.copilot / github.copilot-chat)
+		// Servers from built-in AI chat extensions (GitHub Copilot and QuantumIDE Chat)
 		// are treated as built-in; servers from other extensions go under "Extensions".
 		const collectionSources = new Map(this.mcpRegistry.collections.get().map(c => [c.id, c.source]));
 		const pluginServers: IMcpServer[] = [];
@@ -849,7 +850,7 @@ export class McpListWidget extends Disposable {
 				icon: extensionIcon,
 				count: extensionServers.length,
 				isFirst,
-				description: localize('extensionGroupDescription', "MCP servers contributed by installed VS Code extensions."),
+				description: localize({ key: 'extensionGroupDescription', comment: ['{0} is the application name'] }, "MCP servers contributed by installed {0} extensions.", product.nameLong),
 				collapsed,
 			});
 			if (!collapsed) {
@@ -876,7 +877,7 @@ export class McpListWidget extends Disposable {
 				icon: builtinIcon,
 				count: otherBuiltinServers.length,
 				isFirst,
-				description: localize('builtInGroupDescription', "MCP servers built into VS Code. These are available automatically."),
+				description: localize({ key: 'builtInGroupDescription', comment: ['{0} is the application name'] }, "MCP servers built into {0}. These are available automatically.", product.nameLong),
 				collapsed,
 			});
 			if (!collapsed) {

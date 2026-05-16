@@ -106,7 +106,7 @@ function runBrew(label: string) {
 }
 
 function runCurl(label: string) {
-	const result = spawnSync('bash', ['-c', 'curl -fsSL https://gh.io/copilot-install | bash'], { stdio: 'inherit', env });
+	const result = spawnSync('bash', ['-c', 'curl -fsSL https://raw.githubusercontent.com/github/copilot-cli/refs/heads/main/install.sh | bash'], { stdio: 'inherit', env });
 	if (result.error) {
 		warn(`${label} via curl failed: ${result.error.message}`);
 		return false;
@@ -119,7 +119,7 @@ function runCurl(label: string) {
 }
 
 function runWget(label: string) {
-	const result = spawnSync('bash', ['-c', 'wget -qO- https://gh.io/copilot-install | bash'], { stdio: 'inherit', env });
+	const result = spawnSync('bash', ['-c', 'wget -qO- https://raw.githubusercontent.com/github/copilot-cli/refs/heads/main/install.sh | bash'], { stdio: 'inherit', env });
 	if (result.error) {
 		warn(`${label} via wget failed: ${result.error.message}`);
 		return false;

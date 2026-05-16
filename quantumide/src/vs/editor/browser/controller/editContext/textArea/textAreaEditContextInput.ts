@@ -206,7 +206,7 @@ export class TextAreaInput extends Disposable {
 
 			if (e.equals(KeyCode.Escape)) {
 				// Prevent default always for `Esc`, otherwise it will generate a keypress
-				// See https://msdn.microsoft.com/en-us/library/ie/ms536939(v=vs.85).aspx
+				// See https://developer.mozilla.org/en-US/docs/Web/API/Element/keypress_event
 				e.preventDefault();
 			}
 

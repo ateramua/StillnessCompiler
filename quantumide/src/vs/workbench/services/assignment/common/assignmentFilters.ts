@@ -102,7 +102,7 @@ export class CopilotAssignmentFilterProvider extends Disposable implements IExpe
 		this.copilotIsFcv1 = this._storageService.get(StorageVersionKeys.CopilotIsFcv1, StorageScope.PROFILE);
 
 		this._register(this._extensionService.onDidChangeExtensionsStatus(extensionIdentifiers => {
-			if (extensionIdentifiers.some(identifier => ExtensionIdentifier.equals(identifier, 'github.copilot') || ExtensionIdentifier.equals(identifier, 'github.copilot-chat'))) {
+			if (extensionIdentifiers.some(identifier => ExtensionIdentifier.equals(identifier, 'github.copilot') || ExtensionIdentifier.equals(identifier, 'github.copilot-chat') || ExtensionIdentifier.equals(identifier, 'quantumide.personal-chat'))) {
 				this.updateExtensionVersions();
 			}
 		}));
@@ -126,10 +126,12 @@ export class CopilotAssignmentFilterProvider extends Disposable implements IExpe
 		let copilotCompletionsVersion;
 
 		try {
-			const [copilotExtension, copilotChatExtension] = await Promise.all([
+			const [copilotExtension, ghCopilotChatExtension, quantumideChatExtension] = await Promise.all([
 				this._extensionService.getExtension('github.copilot'),
 				this._extensionService.getExtension('github.copilot-chat'),
+				this._extensionService.getExtension('quantumide.personal-chat'),
 			]);
+			const copilotChatExtension = ghCopilotChatExtension ?? quantumideChatExtension;
 
 			copilotExtensionVersion = copilotExtension?.version;
 			copilotChatExtensionVersion = copilotChatExtension?.version;

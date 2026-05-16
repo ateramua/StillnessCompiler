@@ -42,7 +42,7 @@ const defaultModelPickerItems: ModelPickerItem[] = [
 
 export class ModelPickerManager {
 	// URL for information about Copilot models
-	private readonly MODELS_INFO_URL = 'https://aka.ms/CopilotCompletionsModelPickerLearnMore';
+	private readonly MODELS_INFO_URL = 'https://code.visualstudio.com/docs/copilot/reference/copilot-vscode-features';
 
 	get models(): ModelItem[] {
 		return this._modelManager.getGenericCompletionModels();

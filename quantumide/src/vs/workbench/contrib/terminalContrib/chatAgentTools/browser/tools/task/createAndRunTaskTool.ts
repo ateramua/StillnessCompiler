@@ -22,6 +22,7 @@ import { IInstantiationService } from '../../../../../../../platform/instantiati
 import { DisposableStore } from '../../../../../../../base/common/lifecycle.js';
 import { TaskToolEvent, TaskToolClassification } from './taskToolsTelemetry.js';
 import { TerminalToolId } from '../toolIds.js';
+import product from '../../../../../../../platform/product/common/product.js';
 
 interface ICreateAndRunTaskToolInput {
 	workspaceFolder: string;
@@ -259,7 +260,7 @@ export const CreateAndRunTaskToolData: IToolData = {
 					},
 					'problemMatcher': {
 						'type': 'array',
-						'description': `The problem matcher to use to parse task output for errors and warnings. Can be a predefined matcher like '$tsc' (TypeScript), '$eslint - stylish', '$gcc', etc., or a custom pattern defined in tasks.json. This helps VS Code display errors in the Problems panel and enables quick navigation to error locations.`,
+						'description': `The problem matcher to use to parse task output for errors and warnings. Can be a predefined matcher like '$tsc' (TypeScript), '$eslint - stylish', '$gcc', etc., or a custom pattern defined in tasks.json. This helps ${product.nameLong} display errors in the Problems panel and enables quick navigation to error locations.`,
 						'items': {
 							'type': 'string'
 						}

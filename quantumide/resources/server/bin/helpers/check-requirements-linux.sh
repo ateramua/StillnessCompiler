@@ -107,7 +107,7 @@ if [ "$OS_ID" = "alpine" ]; then
         fi
     done
     if [ "$(printf '%s\n' "1.2.3" "$musl_version" | sort -V | head -n1)" != "1.2.3" ]; then
-        echo "Error: Unsupported alpine distribution. Please refer to our supported distro section https://aka.ms/vscode-remote/linux for additional information."
+        echo "Error: Unsupported alpine distribution. Please refer to our supported distro section https://code.visualstudio.com/docs/remote/linux for additional information."
         exit 99
     fi
     found_required_glibc=1
@@ -155,7 +155,7 @@ else
 fi
 
 if [ "$found_required_glibc" = "0" ] || [ "$found_required_glibcxx" = "0" ]; then
-	echo "Error: Missing required dependencies. Please refer to our FAQ https://aka.ms/vscode-remote/faq/old-linux for additional information."
+	echo "Error: Missing required dependencies. Please refer to our FAQ https://code.visualstudio.com/docs/remote/faq#_can-i-run-vs-code-server-on-older-linux-distributions for additional information."
 	# Custom exit code based on https://tldp.org/LDP/abs/html/exitcodes.html
 	exit 99
 fi

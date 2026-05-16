@@ -9,7 +9,7 @@
 	"license": "SEE LICENSE IN LICENSE.txt",
 
 	"bugs": {
-		"url": "https://aka.ms/microsoft/vscode-copilot-release"
+		"url": "https://github.com/microsoft/vscode-copilot-release/issues"
 	},
 	"qna": "https://github.com/github-community/community/discussions/categories/copilot",
 	"icon": "assets/Copilot-App-Icon.png",

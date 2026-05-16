@@ -128,40 +128,40 @@ suite('Editor Modes - Link Computer', () => {
 			'     http://mylink.com      '
 		);
 		assertLink(
-			'// Click here to learn more. https://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409',
-			'                             https://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409'
+			'// Click here to learn more. https://learn.microsoft.com/en-us/aspnet/core/client-side/using-grunt',
+			'                             https://learn.microsoft.com/en-us/aspnet/core/client-side/using-grunt'
 		);
 		assertLink(
-			'// Click here to learn more. https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx',
-			'                             https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx'
+			'// Click here to learn more. https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file',
+			'                             https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file'
 		);
 		assertLink(
 			'// https://github.com/projectkudu/kudu/blob/master/Kudu.Core/Scripts/selectNodeVersion.js',
 			'   https://github.com/projectkudu/kudu/blob/master/Kudu.Core/Scripts/selectNodeVersion.js'
 		);
 		assertLink(
-			'<!-- !!! Do not remove !!!   WebContentRef(link:https://go.microsoft.com/fwlink/?LinkId=166007, area:Admin, updated:2015, nextUpdate:2016, tags:SqlServer)   !!! Do not remove !!! -->',
-			'                                                https://go.microsoft.com/fwlink/?LinkId=166007                                                                                        '
+			'<!-- !!! Do not remove !!!   WebContentRef(link:https://learn.microsoft.com/en-us/azure/devops/server/command-line/tfsconfig-cmd, area:Admin, updated:2015, nextUpdate:2016, tags:SqlServer)   !!! Do not remove !!! -->',
+			'                                                https://learn.microsoft.com/en-us/azure/devops/server/command-line/tfsconfig-cmd                                                                                        '
 		);
 		assertLink(
-			'For instructions, see https://go.microsoft.com/fwlink/?LinkId=166007.</value>',
-			'                      https://go.microsoft.com/fwlink/?LinkId=166007         '
+			'For instructions, see https://learn.microsoft.com/en-us/azure/devops/server/command-line/tfsconfig-cmd.</value>',
+			'                      https://learn.microsoft.com/en-us/azure/devops/server/command-line/tfsconfig-cmd         '
 		);
 		assertLink(
-			'For instructions, see https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx.</value>',
-			'                      https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx         '
+			'For instructions, see https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file.</value>',
+			'                      https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file         '
 		);
 		assertLink(
 			'x = "https://en.wikipedia.org/wiki/Zürich";',
 			'     https://en.wikipedia.org/wiki/Zürich  '
 		);
 		assertLink(
-			'請參閱 http://go.microsoft.com/fwlink/?LinkId=761051。',
-			'    http://go.microsoft.com/fwlink/?LinkId=761051 '
+			'請參閱 https://code.visualstudio.com/docs/configure/locales。',
+			'    https://code.visualstudio.com/docs/configure/locales '
 		);
 		assertLink(
-			'（請參閱 http://go.microsoft.com/fwlink/?LinkId=761051）',
-			'     http://go.microsoft.com/fwlink/?LinkId=761051 '
+			'（請參閱 https://code.visualstudio.com/docs/configure/locales）',
+			'     https://code.visualstudio.com/docs/configure/locales '
 		);
 
 		assertLink(
@@ -194,8 +194,8 @@ suite('Editor Modes - Link Computer', () => {
 
 	test('issue #7855', () => {
 		assertLink(
-			'7. At this point, ServiceMain has been called.  There is no functionality presently in ServiceMain, but you can consult the [MSDN documentation](https://msdn.microsoft.com/en-us/library/windows/desktop/ms687414(v=vs.85).aspx) to add functionality as desired!',
-			'                                                                                                                                                 https://msdn.microsoft.com/en-us/library/windows/desktop/ms687414(v=vs.85).aspx                                  '
+			'7. At this point, ServiceMain has been called.  There is no functionality presently in ServiceMain, but you can consult the [MSDN documentation](https://learn.microsoft.com/en-us/windows/win32/services/writing-a-servicemain-function) to add functionality as desired!',
+			'                                                                                                                                                 https://learn.microsoft.com/en-us/windows/win32/services/writing-a-servicemain-function                                  '
 		);
 	});
 

@@ -46,6 +46,7 @@ import { generateColorThemeCSS } from './colorThemeCss.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { IHostService } from '../../host/browser/host.js';
 import { toAction } from '../../../../base/common/actions.js';
+import product from '../../../../platform/product/common/product.js';
 
 // implementation
 
@@ -280,7 +281,7 @@ export class WorkbenchThemeService extends Disposable implements IWorkbenchTheme
 		const keepTheme = await new Promise(resolve => {
 			this.notificationService.prompt(
 				Severity.Info,
-				nls.localize({ key: 'themeUpdatedNotification', comment: ['{0} is the name of the new default theme'] }, "VS Code has a new default theme: '{0}'.", this.getColorTheme().label),
+				nls.localize({ key: 'themeUpdatedNotification', comment: ['{0} is application name', '{1} is the name of the new default theme'] }, "{0} has a new default theme: '{1}'.", product.nameLong, this.getColorTheme().label),
 				[
 					toAction({
 						id: 'themeUpdated.tryItOut',

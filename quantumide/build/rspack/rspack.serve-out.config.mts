@@ -22,7 +22,8 @@ function findFreePort(startPort: number): Promise<number> {
 	});
 }
 
-const port = await findFreePort(5123);
+const requestedPort = process.env.PORT ? Number(process.env.PORT) : undefined;
+const port = requestedPort || await findFreePort(5123);
 
 export default {
 	context: repoRoot,
@@ -100,6 +101,25 @@ export default {
 			const sourceCssPath = requestedPath.replace(outVsSegment, srcVsSegment);
 			if (sourceCssPath !== requestedPath && fs.existsSync(sourceCssPath)) {
 				resource.request = sourceCssPath;
+			}
+		}),
+		new rspack.NormalModuleReplacementPlugin(/\.ts\?esm$/, resource => {
+			if (!resource.request.startsWith('.')) {
+				return;
+			}
+
+			const requestWithoutQuery = resource.request.replace(/\?esm$/, '');
+			const requestedPath = path.resolve(resource.context, requestWithoutQuery);
+			const outVsSegment = `${path.sep}out${path.sep}vs${path.sep}`;
+			const srcVsSegment = `${path.sep}src${path.sep}vs${path.sep}`;
+
+			if (!requestedPath.includes(outVsSegment)) {
+				return;
+			}
+
+			const sourceTsPath = requestedPath.replace(outVsSegment, srcVsSegment);
+			if (sourceTsPath !== requestedPath && fs.existsSync(sourceTsPath)) {
+				resource.request = `${sourceTsPath}?esm`;
 			}
 		}),
 		new HtmlRspackPlugin({

@@ -22,8 +22,10 @@ When modifying Azure DevOps pipeline files (YAML files in `build/azure-pipelines
    # Windows (PowerShell as Administrator)
    winget install Microsoft.AzureCLI
 
-   # Linux (Debian/Ubuntu)
-   curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+   # Linux (Debian/Ubuntu) — install per https://learn.microsoft.com/en-us/cli/azure/install-azure-cli-linux?pivots=apt
+   curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/microsoft.gpg > /dev/null \
+     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/trusted.gpg.d/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/azure-cli.list \
+     && sudo apt-get update && sudo apt-get install -y azure-cli
    ```
 
 2. **Check if the DevOps extension is installed**:

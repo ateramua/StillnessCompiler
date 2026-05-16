@@ -8,7 +8,9 @@ import { Disposable } from '../../../../../../base/common/lifecycle.js';
 import { basename, dirname } from '../../../../../../base/common/resources.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { hash } from '../../../../../../base/common/hash.js';
+import { localize } from '../../../../../../nls.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
+import product from '../../../../../../platform/product/common/product.js';
 import { PromptsType } from '../../../common/promptSyntax/promptTypes.js';
 import { type CustomizationRef } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { type URI as ProtocolURI } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
@@ -17,12 +19,16 @@ import { IAgentHostFileSystemService, SYNCED_CUSTOMIZATION_SCHEME } from '../../
 // Re-export so existing consumers don't need to change their import source.
 export { SYNCED_CUSTOMIZATION_SCHEME };
 
-const DISPLAY_NAME = 'VS Code Synced Data';
+function syncedCustomizationDisplayName(): string {
+	return `${product.nameShort} Synced Data`;
+}
 
-const MANIFEST_CONTENT = JSON.stringify({
-	name: DISPLAY_NAME,
-	description: 'Customization data synced from VS Code',
-}, null, '\t');
+function buildManifestContent(): string {
+	return JSON.stringify({
+		name: syncedCustomizationDisplayName(),
+		description: localize({ key: 'syncedCustomization.manifestDescription', comment: ['{0} is the application long name'] }, 'Customization data synced from {0}', product.nameLong),
+	}, null, '\t');
+}
 
 /**
  * Maps a {@link PromptsType} to the default plugin directory where that
@@ -118,7 +124,7 @@ export class SyncedCustomizationBundler extends Disposable {
 
 		// Write the manifest
 		const manifestUri = URI.joinPath(this._rootUri, '.plugin', 'plugin.json');
-		await this._fileService.writeFile(manifestUri, VSBuffer.fromString(MANIFEST_CONTENT));
+		await this._fileService.writeFile(manifestUri, VSBuffer.fromString(buildManifestContent()));
 
 		// Read each source file and write it into the correct plugin directory,
 		// collecting data for the nonce computation.
@@ -158,8 +164,8 @@ export class SyncedCustomizationBundler extends Disposable {
 		return {
 			ref: {
 				uri: this._rootUri.toString() as ProtocolURI,
-				displayName: DISPLAY_NAME,
-				description: `${syncable.length} customization(s) synced from VS Code`,
+				displayName: syncedCustomizationDisplayName(),
+				description: localize({ key: 'syncedCustomization.bundleRefDescription', comment: ['{0} is count, {1} is application long name'] }, '{0} customization(s) synced from {1}', String(syncable.length), product.nameLong),
 				nonce,
 			},
 		};

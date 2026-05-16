@@ -79,7 +79,7 @@ export abstract class CommontExtensionManagementService extends Disposable imple
 		}
 
 		if (!(await this.isExtensionPlatformCompatible(extension))) {
-			const learnLink = isWeb ? 'https://aka.ms/vscode-web-extensions-guide' : 'https://aka.ms/vscode-platform-specific-extensions';
+			const learnLink = isWeb ? 'https://code.visualstudio.com/api/extension-guides/web-extensions' : 'https://code.visualstudio.com/api/working-with-extensions/publishing-extension#platform-specific-extensions';
 			return new MarkdownString(`${nls.localize('incompatible platform', "The '{0}' extension is not available in {1} for the {2} platform.",
 				extension.displayName ?? extension.identifier.id, this.productService.nameLong, TargetPlatformToString(await this.getTargetPlatform()))} [${nls.localize('learn why', "Learn Why")}](${learnLink})`);
 		}

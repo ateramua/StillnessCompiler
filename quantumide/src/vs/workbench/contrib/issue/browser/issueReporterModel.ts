@@ -6,6 +6,7 @@
 import { mainWindow } from '../../../../base/browser/window.js';
 import { isRemoteDiagnosticError, SystemInfo } from '../../../../platform/diagnostics/common/diagnostics.js';
 import { ISettingSearchResult, IssueReporterExtensionData, IssueType } from '../common/issue.js';
+import product from '../../../../platform/product/common/product.js';
 
 interface VersionInfo {
 	vscodeVersion: string;
@@ -96,7 +97,7 @@ Type: <b>${this.getIssueTypeTitle()}</b>
 ${this._data.isSessionsWindow ? '\nWindow: Agents\n' : ''}
 ${this._data.issueDescription}
 ${this.getExtensionVersion()}
-VS Code version: ${this._data.versionInfo && this._data.versionInfo.vscodeVersion}
+${product.nameLong} version: ${this._data.versionInfo && this._data.versionInfo.vscodeVersion}
 OS version: ${this._data.versionInfo && this._data.versionInfo.os}
 Modes:${modes.length ? ' ' + modes.join(', ') : ''}
 ${this.getRemoteOSes()}

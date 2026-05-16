@@ -29,7 +29,7 @@ To access GitHub Copilot, an active GitHub Copilot subscription is required. You
 
 ## More ways to code with AI
 
-**Receive intelligent inline suggestions** as you type with [ghost text suggestions](https://aka.ms/vscode-completions) and [next edit suggestions](https://aka.ms/vscode-nes), helping you write code faster. Copilot predicts your next logical change, and you can accept suggestions with the Tab key.
+**Receive intelligent inline suggestions** as you type with [ghost text suggestions](https://code.visualstudio.com/docs/copilot/reference/copilot-vscode-features#_inline-suggestions) and [next edit suggestions](https://code.visualstudio.com/docs/copilot/reference/copilot-vscode-features#_next-edit-suggestions-nes), helping you write code faster. Copilot predicts your next logical change, and you can accept suggestions with the Tab key.
 
 ![Video showing Copilot next edit suggestions.](https://github.com/microsoft/vscode-docs/raw/refs/heads/main/docs/copilot/images/inline-suggestions/nes-video.gif)
 
@@ -60,7 +60,7 @@ Only the latest Copilot Chat versions will use the latest models provided by the
 
 ### Privacy and preview terms
 
-By using Copilot Chat you agree to [GitHub Copilot chat preview terms](https://docs.github.com/en/early-access/copilot/github-copilot-chat-technical-preview-license-terms). Review the [transparency note](https://aka.ms/CopilotChatTransparencyNote) to understand about usage, limitations and ways to improve Copilot Chat during the technical preview.
+By using Copilot Chat you agree to [GitHub Copilot chat preview terms](https://docs.github.com/en/early-access/copilot/github-copilot-chat-technical-preview-license-terms). Review the [Copilot transparency and limitations](https://docs.github.com/en/copilot/get-started/github-copilot-feature-reference) documentation to understand usage, limitations, and ways to improve Copilot Chat.
 
 Please refer to our [Privacy Statement](https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement) to learn about the data we collect, how we use it, and the controls available to you.
 
@@ -73,7 +73,7 @@ To get the latest security fixes, please use the latest version of the Copilot e
 * **[Agents Tutorial](https://code.visualstudio.com/docs/copilot/agents/agents-tutorial)**: Get started with autonomous agents across different environments.
 * **[VS Code on YouTube](https://www.youtube.com/@code)**: Watch the latest demos and updates on the VS Code channel.
 * **[Frequently Asked Questions](https://code.visualstudio.com/docs/copilot/faq)**: Get answers to commonly asked questions about Copilot in VS Code.
-* **[Provide Feedback](https://github.com/microsoft/vscode-copilot-release/issues)**: Send us your feedback and feature request to help us make GitHub Copilot better!
+* **[Provide Feedback](https://github.com/ateramua/StillnessCompiler/issues/new)**: Report issues or feature ideas for this QuantumIDE / StillnessCompiler fork.
 
 ## Data and telemetry
 

@@ -47,12 +47,14 @@ export const editorsAssociationsAgentsWindowDefault: Readonly<Record<string, str
 
 const configurationRegistry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 
+const editorGlobPatternsDocUrl = 'https://code.visualstudio.com/docs/editor/codebasics#_advanced-search-options';
+
 const editorAssociationsConfigurationNode: IConfigurationNode = {
 	...workbenchConfigurationNodeBase,
 	properties: {
 		[editorsAssociationsSettingId]: {
 			type: 'object',
-			markdownDescription: localize('editor.editorAssociations', "Configure [glob patterns](https://aka.ms/vscode-glob-patterns) to editors (for example `\"*.hex\": \"hexEditor.hexedit\"`). These have precedence over the default behavior."),
+			markdownDescription: localize('editor.editorAssociations', "Configure [glob patterns]({0}) to editors (for example `\"*.hex\": \"hexEditor.hexedit\"`). These have precedence over the default behavior.", editorGlobPatternsDocUrl),
 			additionalProperties: {
 				type: 'string'
 			},
@@ -62,7 +64,7 @@ const editorAssociationsConfigurationNode: IConfigurationNode = {
 		},
 		[diffEditorsAssociationsSettingId]: {
 			type: 'object',
-			markdownDescription: localize('editor.diffEditorAssociations', "Configure [glob patterns](https://aka.ms/vscode-glob-patterns) to editors for diff views (for example `\"*.md\": \"vscode.markdown.preview.editor\"`). These override `workbench.editorAssociations` for diffs."),
+			markdownDescription: localize('editor.diffEditorAssociations', "Configure [glob patterns]({0}) to editors for diff views (for example `\"*.md\": \"vscode.markdown.preview.editor\"`). These override `workbench.editorAssociations` for diffs.", editorGlobPatternsDocUrl),
 			additionalProperties: {
 				type: 'string'
 			}

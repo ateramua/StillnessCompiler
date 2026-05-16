@@ -228,10 +228,46 @@ function getElectron(arch: string): () => NodeJS.ReadWriteStream {
 	};
 }
 
+/** Same rule as build/npm/preinstall.ts — but `npm run electron` does not run preinstall, so we enforce here. */
+function assertNpmVersionForElectronDownload(): void {
+	const ua = process.env['npm_config_user_agent'] ?? '';
+	const m = ua.match(/npm\/(\d+)\.(\d+)\.(\d+)/);
+	if (!m) {
+		return;
+	}
+	const major = parseInt(m[1], 10);
+	const minor = parseInt(m[2], 10);
+	if (major > 11 || (major === 11 && minor >= 2)) {
+		throw new Error(
+			`npm ${major}.${minor}.${m[3]} breaks Electron extraction in this repo (incomplete .app → dyld errors). ` +
+			`Use Node from .nvmrc with npm < 11.2, e.g.: ./scripts/ensure-node22.sh npm run electron (see build/npm/preinstall.ts).`
+		);
+	}
+}
+
 async function main(arch: string = process.arch): Promise<void> {
+	assertNpmVersionForElectronDownload();
 	const electronPath = path.join(root, '.build', 'electron');
 	await util.rimraf(electronPath)();
 	await util.streamToPromise(getElectron(arch)());
+	// Wrong Node/npm versions can still yield exit 0 from gulp while omitting Chromium frameworks (dyld failure at launch).
+	if (process.platform === 'darwin') {
+		const appBundle = path.join(electronPath, `${product.nameLong}.app`);
+		const fwRoot = path.join(appBundle, 'Contents', 'Frameworks', 'Electron Framework.framework');
+		const frameworkBinary = path.join(fwRoot, 'Versions', 'A', 'Electron Framework');
+		const loaderPath = path.join(fwRoot, 'Electron Framework');
+		if (!fs.existsSync(frameworkBinary)) {
+			throw new Error(
+				`Electron app is incomplete (missing "${path.relative(root, frameworkBinary)}"). ` +
+				`Delete ".build/electron", then rebuild with Node matching .nvmrc and npm < 11.2 (see build/npm/preinstall.ts). ` +
+				`Tip: ./scripts/ensure-node22.sh npm run electron — current Node: ${process.version}`
+			);
+		}
+		// dyld resolves @rpath to .../Electron Framework.framework/Electron Framework (top-level symlink in the bundle).
+		if (!fs.existsSync(loaderPath)) {
+			fs.symlinkSync('Versions/A/Electron Framework', loaderPath);
+		}
+	}
 }
 
 if (import.meta.main) {

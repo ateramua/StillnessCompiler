@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as nls from '../../../../nls.js';
+import product from '../../../../platform/product/common/product.js';
 import { StatusbarAlignment, IStatusbarService, IStatusbarEntryAccessor } from '../../../services/statusbar/browser/statusbar.js';
 import { Disposable, MutableDisposable } from '../../../../base/common/lifecycle.js';
 import { parseKeyboardLayoutDescription, areKeyboardLayoutsEqual, getKeyboardLayoutId, IKeyboardLayoutService, IKeyboardLayoutInfo } from '../../../../platform/keyboardLayout/common/keyboardLayout.js';
@@ -93,8 +94,8 @@ interface IUnknownLayout {
 }
 
 const DEFAULT_CONTENT: string = [
-	`// ${nls.localize('displayLanguage', 'Defines the keyboard layout used in VS Code in the browser environment.')}`,
-	`// ${nls.localize('doc', 'Open VS Code and run "Developer: Inspect Key Mappings (JSON)" from Command Palette.')}`,
+	`// ${nls.localize('displayLanguage', 'Defines the keyboard layout used in {0} in the browser environment.', product.nameLong)}`,
+	`// ${nls.localize('doc', 'Open {0} and run "Developer: Inspect Key Mappings (JSON)" from Command Palette.', product.nameLong)}`,
 	``,
 	`// Once you have the keyboard layout info, please paste it below.`,
 	'\n'

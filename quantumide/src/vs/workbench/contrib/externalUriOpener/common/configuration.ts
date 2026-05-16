@@ -6,6 +6,7 @@
 import { IConfigurationNode, IConfigurationRegistry, Extensions } from '../../../../platform/configuration/common/configurationRegistry.js';
 import { workbenchConfigurationNodeBase } from '../../../common/configuration.js';
 import * as nls from '../../../../nls.js';
+import product from '../../../../platform/product/common/product.js';
 import { IJSONSchema } from '../../../../base/common/jsonSchema.js';
 import { Registry } from '../../../../platform/registry/common/platform.js';
 
@@ -55,7 +56,7 @@ export const externalUriOpenersConfigurationNode: IConfigurationNode = {
 						type: 'string',
 						markdownDescription: nls.localize('externalUriOpeners.uri', "Map URI pattern to an opener id.\nExample patterns: \n{0}", exampleUriPatterns),
 						enum: [defaultExternalUriOpenerId],
-						enumDescriptions: [nls.localize('externalUriOpeners.defaultId', "Open using VS Code's standard opener.")],
+						enumDescriptions: [nls.localize('externalUriOpeners.defaultId', "Open using {0}'s standard opener.", product.nameLong)],
 					},
 					externalUriOpenerIdSchemaAddition
 				]

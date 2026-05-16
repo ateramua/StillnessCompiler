@@ -74,10 +74,10 @@ suite('aiCustomizationListWidget', () => {
 	});
 
 	suite('extractExtensionIdFromPath', () => {
-		test('extracts extension ID from copilot-chat extension path', () => {
+		test('extracts extension ID from QuantumIDE chat extension path', () => {
 			assert.strictEqual(
-				extractExtensionIdFromPath('/Users/josh/.vscode-insiders/extensions/github.copilot-chat-0.43.2026040602/assets/prompts/skills/agent-customization/SKILL.md'),
-				'github.copilot-chat'
+				extractExtensionIdFromPath('/Users/josh/.vscode-insiders/extensions/quantumide.personal-chat-0.49.0/assets/prompts/skills/agent-customization/SKILL.md'),
+				'quantumide.personal-chat'
 			);
 		});
 
@@ -90,8 +90,8 @@ suite('aiCustomizationListWidget', () => {
 
 		test('extracts extension ID from Code OSS dev path', () => {
 			assert.strictEqual(
-				extractExtensionIdFromPath('/Users/josh/.vscode-oss-dev/extensions/github.copilot-chat-0.43.2026040602/assets/prompts/skills/troubleshoot/SKILL.md'),
-				'github.copilot-chat'
+				extractExtensionIdFromPath('/Users/josh/.vscode-oss-dev/extensions/quantumide.personal-chat-0.49.0/assets/prompts/skills/troubleshoot/SKILL.md'),
+				'quantumide.personal-chat'
 			);
 		});
 
@@ -130,17 +130,17 @@ suite('aiCustomizationListWidget', () => {
 			);
 		});
 
-		test('extracts extension ID from User/globalStorage path (Copilot Chat ask agent)', () => {
+		test('extracts extension ID from User/globalStorage path (QuantumIDE Chat ask agent)', () => {
 			assert.strictEqual(
-				extractExtensionIdFromPath('/Users/josh/.vscode-oss-dev/User/globalStorage/github.copilot-chat/ask-agent/Ask.agent.md'),
-				'github.copilot-chat'
+				extractExtensionIdFromPath('/Users/josh/.vscode-oss-dev/User/globalStorage/quantumide.personal-chat/ask-agent/Ask.agent.md'),
+				'quantumide.personal-chat'
 			);
 		});
 
 		test('extracts extension ID from User/globalStorage path on Insiders', () => {
 			assert.strictEqual(
-				extractExtensionIdFromPath('/Users/josh/Library/Application Support/Code - Insiders/User/globalStorage/github.copilot-chat/ask-agent/Ask.agent.md'),
-				'github.copilot-chat'
+				extractExtensionIdFromPath('/Users/josh/Library/Application Support/Code - Insiders/User/globalStorage/quantumide.personal-chat/ask-agent/Ask.agent.md'),
+				'quantumide.personal-chat'
 			);
 		});
 

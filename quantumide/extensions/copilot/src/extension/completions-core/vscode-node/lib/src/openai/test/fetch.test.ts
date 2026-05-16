@@ -141,7 +141,7 @@ suite('"Fetch" unit tests', function () {
 		assert.deepStrictEqual(statusReporter.kind, 'Warning');
 		assert.deepStrictEqual(
 			statusReporter.message,
-			'Last response was a 418 error and does not appear to originate from GitHub. Is a proxy or firewall intercepting this request? https://gh.io/copilot-firewall'
+			'Last response was a 418 error and does not appear to originate from GitHub. Is a proxy or firewall intercepting this request? https://docs.github.com/en/copilot/reference/copilot-allowlist-reference'
 		);
 	});
 

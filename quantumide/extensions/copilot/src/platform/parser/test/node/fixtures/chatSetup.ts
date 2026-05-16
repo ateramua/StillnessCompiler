@@ -770,7 +770,7 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 				if (!context.state.installed && !otherAgentsAndToolsDisposable.value) {
 					const disposables = otherAgentsAndToolsDisposable.value = new DisposableStore();
 					// VSCode Agent
-					disposables.add(SetupChatAgent.registerOtherAgents(this.instantiationService, 'setup.vscode', 'vscode', false, localize2('vscodeAgentDescription', "Ask questions about VS Code").value, ChatAgentLocation.Panel, undefined, context, controller).disposable);
+					disposables.add(SetupChatAgent.registerOtherAgents(this.instantiationService, 'setup.vscode', 'vscode', false, localize2({ key: 'vscodeAgentDescription', comment: ['{0} is the application name'] }, "Ask questions about {0}", product.nameLong).value, ChatAgentLocation.Panel, undefined, context, controller).disposable);
 
 					// Tools
 					disposables.add(SetupTool.registerTools(this.instantiationService, {
@@ -780,8 +780,8 @@ export class ChatSetupContribution extends Disposable implements IWorkbenchContr
 						},
 						icon: Codicon.newFolder,
 						displayName: localize('setupToolDisplayName', "New Workspace"),
-						modelDescription: localize('setupToolsDescription', "Scaffold a new workspace in VS Code"),
-						userDescription: localize('setupToolsDescription', "Scaffold a new workspace in VS Code"),
+						modelDescription: localize({ key: 'setupToolsDescription', comment: ['{0} is the application name'] }, 'Scaffold a new workspace in {0}', product.nameLong),
+						userDescription: localize({ key: 'setupToolsDescription', comment: ['{0} is the application name'] }, 'Scaffold a new workspace in {0}', product.nameLong),
 						canBeReferencedInPrompt: true,
 						toolReferenceName: 'new',
 						when: ContextKeyExpr.true(),

@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as l10n from '@vscode/l10n';
+import { env } from 'vscode';
 import type * as vscode from 'vscode';
 import { IResponsePart } from '../../../platform/chat/common/chatMLFetcher';
 import { ChatLocation } from '../../../platform/chat/common/commonTypes';
@@ -144,7 +145,7 @@ export class VscodeIntent implements IIntent {
 	static readonly ID = Intent.VSCode;
 	readonly id: string = VscodeIntent.ID;
 	readonly locations = [ChatLocation.Panel];
-	readonly description: string = l10n.t('Ask questions about VS Code');
+	readonly description: string = l10n.t('Ask questions about {0}', env.appName);
 
 	readonly commandInfo: IIntentSlashCommandInfo = {
 		allowsEmptyArgs: true,

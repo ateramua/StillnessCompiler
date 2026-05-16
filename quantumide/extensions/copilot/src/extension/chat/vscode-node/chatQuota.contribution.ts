@@ -16,7 +16,7 @@ export class ChatQuotaContribution extends Disposable implements IExtensionContr
 			// Clear quota before opening the page to ensure that if the user enabled additional usage,
 			// the next request they send won't try to downgrade them to the base model.
 			chatQuotaService.clearQuota();
-			env.openExternal(Uri.parse('https://aka.ms/github-copilot-manage-overage'));
+			env.openExternal(Uri.parse('https://docs.github.com/en/billing/managing-billing-for-github-copilot/about-billing-for-github-copilot'));
 		}));
 	}
 }

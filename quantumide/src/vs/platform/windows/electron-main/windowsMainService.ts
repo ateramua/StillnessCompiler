@@ -60,6 +60,10 @@ import { ICSSDevelopmentService } from '../../cssDev/node/cssDevService.js';
 import { ResourceSet } from '../../../base/common/map.js';
 import { VSBuffer } from '../../../base/common/buffer.js';
 
+const UNC_PATH_DOC_URL = product.documentationUrl
+	? product.documentationUrl.replace(/#.*$/, '') + '#unc-path-access-on-windows'
+	: 'https://code.visualstudio.com/docs/configure/unc';
+
 //#region Helper Interfaces
 
 type RestoreWindowsSetting = 'preserve' | 'all' | 'folders' | 'one' | 'none';
@@ -1290,7 +1294,7 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
 		}
 
 		if (response === 2) {
-			shell.openExternal('https://aka.ms/vscode-windows-unc');
+			shell.openExternal(UNC_PATH_DOC_URL);
 
 			return this.onUNCHostNotAllowed(path, options); // keep showing the dialog until decision (https://github.com/microsoft/vscode/issues/181956)
 		}

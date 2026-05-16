@@ -10,6 +10,7 @@ import { ThemeIcon } from '../../../../../base/common/themables.js';
 import { foreground, listActiveSelectionForeground, registerColor, transparent } from '../../../../../platform/theme/common/colorRegistry.js';
 import { getChatSessionType } from '../../common/model/chatUri.js';
 import { IProductService } from '../../../../../platform/product/common/productService.js';
+import product from '../../../../../platform/product/common/product.js';
 import { isAgentHostTarget, SessionType } from '../../common/chatSessionsService.js';
 
 export enum AgentSessionProviders {
@@ -142,7 +143,7 @@ export function getAgentCanContinueIn(provider: AgentSessionTarget): boolean {
 export function getAgentSessionProviderDescription(provider: AgentSessionTarget): string {
 	switch (provider) {
 		case AgentSessionProviders.Local:
-			return localize('chat.session.providerDescription.local', "Run tasks within VS Code chat. The agent iterates via chat and works interactively to implement changes on your main workspace.");
+			return localize('chat.session.providerDescription.local', "Run tasks within {0} chat. The agent iterates via chat and works interactively to implement changes on your main workspace.", product.nameLong);
 		case AgentSessionProviders.Background:
 			return localize('chat.session.providerDescription.background', "Delegate tasks to a background agent running locally on your machine. The agent iterates via chat and works asynchronously in a Git worktree to implement changes isolated from your main workspace using the GitHub Copilot CLI.");
 		case AgentSessionProviders.Cloud:

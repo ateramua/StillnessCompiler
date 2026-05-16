@@ -36,7 +36,7 @@ export function getCustomizationSecondaryText(description: string | undefined, f
  * extensions like Copilot Chat that materialize prompt files under their
  * own globalStorage and register them via the prompt-file provider API.
  *
- * Returns the extension ID (e.g. `github.copilot-chat`) or `undefined`
+ * Returns the extension ID (e.g. `quantumide.personal-chat`) or `undefined`
  * if the path is not inside an extension directory.
  */
 export function extractExtensionIdFromPath(uriPath: string): string | undefined {
@@ -65,7 +65,7 @@ export function extractExtensionIdFromPath(uriPath: string): string | undefined 
 	}
 	const folderName = segments[extensionsIdx + 1];
 	// Strip version suffix: the version starts with digits after the last hyphen
-	// e.g. "github.copilot-chat-0.43.2026040602" → "github.copilot-chat"
+	// e.g. "quantumide.personal-chat-0.49.0" → "quantumide.personal-chat"
 	const versionMatch = folderName.match(/^(.+)-\d+\./);
 	return versionMatch ? versionMatch[1] : undefined;
 }

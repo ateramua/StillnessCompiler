@@ -733,19 +733,8 @@ export class McpServer extends Disposable implements IMcpServer {
 		}
 		if (error.code === 'ENOENT' && cnx.launchDefinition.type === McpServerTransportType.Stdio) {
 			let docsLink: string | undefined;
-			switch (cnx.launchDefinition.command) {
-				case 'uvx':
-					docsLink = `https://aka.ms/vscode-mcp-install/uvx`;
-					break;
-				case 'npx':
-					docsLink = `https://aka.ms/vscode-mcp-install/npx`;
-					break;
-				case 'dnx':
-					docsLink = `https://aka.ms/vscode-mcp-install/dnx`;
-					break;
-				case 'dotnet':
-					docsLink = `https://aka.ms/vscode-mcp-install/dotnet`;
-					break;
+			if (['uvx', 'npx', 'dnx', 'dotnet'].includes(cnx.launchDefinition.command)) {
+				docsLink = 'https://code.visualstudio.com/docs/copilot/customization/mcp-servers#_add-an-mcp-server';
 			}
 
 			const options: IPromptChoice[] = [{
@@ -756,7 +745,7 @@ export class McpServer extends Disposable implements IMcpServer {
 			if (cnx.definition.devMode?.debug?.type === 'debugpy' && debug) {
 				this._notificationService.prompt(Severity.Error, localize('mcpDebugPyHelp', 'The command "{0}" was not found. You can specify the path to debugpy in the `dev.debug.debugpyPath` option.', cnx.launchDefinition.command, cnx.definition.label), [...options, {
 					label: localize('mcpViewDocs', 'View Docs'),
-					run: () => this._openerService.open(URI.parse('https://aka.ms/vscode-mcp-install/debugpy')),
+					run: () => this._openerService.open(URI.parse('https://code.visualstudio.com/docs/copilot/reference/mcp-configuration')),
 				}]);
 				return;
 			}

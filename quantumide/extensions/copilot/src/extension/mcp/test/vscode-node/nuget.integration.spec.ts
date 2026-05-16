@@ -107,7 +107,7 @@ describe.runIf(RUN_DOTNET_CLI_TESTS).skip('get nuget MCP server info using dotne
 		if (result.state === 'error') {
 			expect(result.errorType).toBe('MissingCommand');
 			expect(result.helpUriLabel).toBe('Install .NET SDK');
-			expect(result.helpUri).toBe('https://aka.ms/vscode-mcp-install/dotnet');
+			expect(result.helpUri).toBe('https://code.visualstudio.com/docs/copilot/customization/mcp-servers#_add-an-mcp-server');
 		} else {
 			expect.fail();
 		}
@@ -121,7 +121,7 @@ describe.runIf(RUN_DOTNET_CLI_TESTS).skip('get nuget MCP server info using dotne
 		if (result.state === 'error') {
 			expect(result.errorType).toBe('BadCommandVersion');
 			expect(result.helpUriLabel).toBe('Update .NET SDK');
-			expect(result.helpUri).toBe('https://aka.ms/vscode-mcp-install/dotnet');
+			expect(result.helpUri).toBe('https://code.visualstudio.com/docs/copilot/customization/mcp-servers#_add-an-mcp-server');
 		} else {
 			expect.fail();
 		}

@@ -23578,7 +23578,7 @@
           "customizations": {
             "vscode": {
               "extensions": [
-                "GitHub.copilot-chat",
+                "quantumide.personal-chat",
                 "GitHub.copilot"
               ]
             }

@@ -17,7 +17,7 @@ import { IProductService } from '../../../../platform/product/common/productServ
 
 const $ = dom.$;
 
-const LEARN_MORE_URL = 'https://aka.ms/VSCode/Agents/docs';
+const LEARN_MORE_URL = 'https://code.visualstudio.com/docs/copilot/agents/agents-window';
 
 /**
  * Empty state shown in the new-session view when the agents window is

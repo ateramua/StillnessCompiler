@@ -11,6 +11,7 @@ import { OperatingSystem, OS } from '../../../../base/common/platform.js';
 import { URI } from '../../../../base/common/uri.js';
 import { generateUuid } from '../../../../base/common/uuid.js';
 import { localize } from '../../../../nls.js';
+import product from '../../../../platform/product/common/product.js';
 import { ConfigurationTarget, ConfigurationTargetToString } from '../../../../platform/configuration/common/configuration.js';
 import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
@@ -150,8 +151,9 @@ export class McpSandboxService extends Disposable implements IMcpSandboxService 
 		return {
 			message: localize(
 				'mcpSandboxSuggestion.message',
-				"The MCP server {0} reported potential sandbox blocks. VS Code found possible sandbox configuration updates:\n{1}",
+				"The MCP server {0} reported potential sandbox blocks. {1} found possible sandbox configuration updates:\n{2}",
 				serverLabel,
+				product.nameLong,
 				suggestionLines.join('\n')
 			),
 			sandboxConfig,

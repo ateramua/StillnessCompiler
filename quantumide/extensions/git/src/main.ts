@@ -183,7 +183,7 @@ async function warnAboutMissingGit(): Promise<void> {
 	);
 
 	if (choice === download) {
-		commands.executeCommand('vscode.open', Uri.parse('https://aka.ms/vscode-download-git'));
+		commands.executeCommand('vscode.open', Uri.parse('https://git-scm.com/downloads'));
 	} else if (choice === neverShowAgain) {
 		await config.update('ignoreMissingGitWarning', true, true);
 	}
@@ -285,7 +285,7 @@ async function checkGitv1(info: IGit): Promise<void> {
 	);
 
 	if (choice === update) {
-		commands.executeCommand('vscode.open', Uri.parse('https://aka.ms/vscode-download-git'));
+		commands.executeCommand('vscode.open', Uri.parse('https://git-scm.com/downloads'));
 	} else if (choice === neverShowAgain) {
 		await config.update('ignoreLegacyWarning', true, true);
 	}
@@ -312,7 +312,7 @@ async function checkGitWindows(info: IGit): Promise<void> {
 	);
 
 	if (choice === update) {
-		commands.executeCommand('vscode.open', Uri.parse('https://aka.ms/vscode-download-git'));
+		commands.executeCommand('vscode.open', Uri.parse('https://git-scm.com/downloads'));
 	} else if (choice === neverShowAgain) {
 		await config.update('ignoreWindowsGit27Warning', true, true);
 	}

@@ -31,9 +31,9 @@
 
 ## Look For an Existing Issue
 
-Before you create a new issue, please do a search in [open issues](https://github.com/microsoft/vscode/issues) to see if the issue or feature request has already been filed.
+Before you create a new issue, please do a search in [open issues](https://github.com/ateramua/StillnessCompiler/issues) to see if the issue or feature request has already been filed.
 
-Be sure to scan through the [most popular](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc) feature requests.
+Be sure to scan through the [most popular](https://github.com/ateramua/StillnessCompiler/issues?q=is%3Aopen+is%3Aissue+sort%3Areactions-%2B1-desc) feature requests.
 
 If you find your issue already exists, make relevant comments and add your [reaction](https://github.com/blog/2119-add-reactions-to-pull-requests-issues-and-comments). Use a reaction in place of a "+1" comment:
 
@@ -366,23 +366,23 @@ Object.assign(product, {
 		applicationName: 'code-oss',
 		dataFolderName: '.vscode-oss',
 		urlProtocol: 'code-oss',
-		reportIssueUrl: 'https://github.com/microsoft/vscode/issues/new',
+		reportIssueUrl: 'https://github.com/ateramua/StillnessCompiler/issues/new',
 		licenseName: 'MIT',
 		licenseUrl: 'https://github.com/microsoft/vscode/blob/main/LICENSE.txt',
 		serverLicenseUrl: 'https://github.com/microsoft/vscode/blob/main/LICENSE.txt',
 		defaultChatAgent: {
-			'extensionId': 'GitHub.copilot',
-			'chatExtensionId': 'GitHub.copilot-chat',
-			'documentationUrl': 'https://aka.ms/github-copilot-overview',
-			'termsStatementUrl': 'https://aka.ms/github-copilot-terms-statement',
-			'privacyStatementUrl': 'https://aka.ms/github-copilot-privacy-statement',
-			'skusDocumentationUrl': 'https://aka.ms/github-copilot-plans',
-			'publicCodeMatchesUrl': 'https://aka.ms/github-copilot-match-public-code',
-			'manageSettingsUrl': 'https://aka.ms/github-copilot-settings',
-			'managePlanUrl': 'https://aka.ms/github-copilot-manage-plan',
-			'manageOverageUrl': 'https://aka.ms/github-copilot-manage-overage',
-			'upgradePlanUrl': 'https://aka.ms/github-copilot-upgrade-plan',
-			'signUpUrl': 'https://aka.ms/github-sign-up',
+			'extensionId': 'quantumide.personal-chat',
+			'chatExtensionId': 'quantumide.personal-chat',
+			'documentationUrl': 'https://docs.github.com/en/copilot',
+			'termsStatementUrl': 'https://docs.github.com/en/site-policy/github-terms/github-terms-of-service',
+			'privacyStatementUrl': 'https://docs.github.com/en/site-policy/privacy-policies/github-privacy-statement',
+			'skusDocumentationUrl': 'https://docs.github.com/en/copilot/about-github-copilot/plans-for-github-copilot',
+			'publicCodeMatchesUrl': 'https://docs.github.com/en/copilot/concepts/code-referencing',
+			'manageSettingsUrl': 'https://docs.github.com/en/copilot/managing-copilot',
+			'managePlanUrl': 'https://docs.github.com/en/billing/managing-billing-for-github-copilot/about-billing-for-github-copilot',
+			'manageOverageUrl': 'https://docs.github.com/en/billing/managing-billing-for-github-copilot/about-billing-for-github-copilot',
+			'upgradePlanUrl': 'https://github.com/features/copilot/plans',
+			'signUpUrl': 'https://github.com/signup',
 			'provider': {
 				'default': {
 					'id': 'github',
@@ -421,7 +421,7 @@ Object.assign(product, {
 			'chatQuotaExceededContext': 'github.copilot.chat.quotaExceeded',
 			'completionsQuotaExceededContext': 'github.copilot.completions.quotaExceeded',
 			'walkthroughCommand': 'github.copilot.open.walkthrough',
-			'completionsMenuCommand': 'github.copilot.toggleStatusMenu',
+			'completionsMenuCommand': 'github.copilot.chat.toggleStatusMenu',
 			'chatRefreshTokenCommand': 'github.copilot.refreshToken',
 			'completionsAdvancedSetting': 'github.copilot.advanced',
 			'completionsEnablementSetting': 'github.copilot.enable',

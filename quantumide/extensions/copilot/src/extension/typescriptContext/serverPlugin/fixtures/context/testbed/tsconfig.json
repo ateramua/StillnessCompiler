@@ -1,12 +1,12 @@
 {
-  // Visit https://aka.ms/tsconfig to read more about this file
+  // Visit https://www.typescriptlang.org/tsconfig to read more about this file
   "compilerOptions": {
     // File Layout
     "rootDir": "./src",
     "outDir": "./dist",
 
     // Environment Settings
-    // See also https://aka.ms/tsconfig/module
+    // See also https://www.typescriptlang.org/docs/handbook/modules/reference.html#module-format-detection
     "module": "nodenext",
     "target": "esnext",
     "types": [],

@@ -13,6 +13,7 @@ import { isEqual, joinPath } from '../../../../../base/common/resources.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { localize } from '../../../../../nls.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
+import product from '../../../../../platform/product/common/product.js';
 import { IDialogService } from '../../../../../platform/dialogs/common/dialogs.js';
 import { IEnvironmentService } from '../../../../../platform/environment/common/environment.js';
 import { FileOperationResult, IFileService, toFileOperationResult } from '../../../../../platform/files/common/files.js';
@@ -371,9 +372,9 @@ export class ChatSessionStore extends Disposable {
 							this.dialogService.prompt({
 								custom: true, // so text is copyable
 								title: localize('chatSessionStore.serializationError', 'Error saving chat session'),
-								message: localize('chatSessionStore.writeError', 'Error serializing chat session for storage. The session will be lost if the window is closed. Please report this issue to the VS Code team:\n\n{0}', e.stack || toErrorMessage(e)),
+								message: localize({ key: 'chatSessionStore.writeError', comment: ['{0} is the application long name', '{1} is stack or error text'] }, 'Error serializing chat session for storage. The session will be lost if the window is closed. Please report this issue to the {0} team:\n\n{1}', product.nameLong, e.stack || toErrorMessage(e)),
 								buttons: [
-									{ label: localize('reportIssue', 'Report Issue'), run: () => this.openerService.open('https://github.com/microsoft/vscode/issues/new?template=bug_report.md') }
+									{ label: localize('reportIssue', 'Report Issue'), run: () => this.openerService.open(product.reportIssueUrl ?? 'https://github.com/ateramua/StillnessCompiler/issues/new') }
 								]
 							});
 						}

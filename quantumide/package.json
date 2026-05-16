@@ -10,6 +10,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "dev": "./scripts/ensure-node22.sh ./scripts/code.sh",
     "test": "echo Please run any of the test scripts from the scripts folder.",
     "test-browser": "npx playwright install && node test/unit/browser/index.js",
     "test-browser-no-install": "node test/unit/browser/index.js",
@@ -257,17 +258,14 @@
     "kerberos@2.1.1": {
       "node-addon-api": "7.1.0"
     },
-    "serialize-javascript": "^7.0.3",
-    "ssh2": {
-      "cpu-features": "0.0.0"
-    }
+    "serialize-javascript": "^7.0.3"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/microsoft/vscode.git"
+    "url": "https://github.com/ateramua/StillnessCompiler.git"
   },
   "bugs": {
-    "url": "https://github.com/microsoft/vscode/issues"
+    "url": "https://github.com/ateramua/StillnessCompiler/issues"
   },
   "optionalDependencies": {
     "windows-foreground-love": "0.6.1"

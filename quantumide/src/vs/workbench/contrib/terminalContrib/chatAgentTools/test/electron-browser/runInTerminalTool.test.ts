@@ -919,7 +919,7 @@ suite('RunInTerminalTool', () => {
 
 			const result = await executeToolTest({ command: 'curl https://evil.com' });
 
-			assertConfirmationRequired(result, 'Run `bash` command outside the [sandbox](https://aka.ms/vscode-sandboxing) to access `evil.com`?');
+			assertConfirmationRequired(result, 'Run `bash` command outside the [sandbox](https://code.visualstudio.com/docs/copilot/concepts/trust-and-safety#_agent-sandboxing) to access `evil.com`?');
 			const confirmationMessage = result?.confirmationMessages?.message;
 			ok(confirmationMessage && typeof confirmationMessage !== 'string');
 			if (!confirmationMessage || typeof confirmationMessage === 'string') {
@@ -942,7 +942,7 @@ suite('RunInTerminalTool', () => {
 				requestUnsandboxedExecutionReason: 'Needs network access outside the sandbox',
 			});
 
-			assertConfirmationRequired(result, 'Run `bash` command outside the [sandbox](https://aka.ms/vscode-sandboxing)?');
+			assertConfirmationRequired(result, 'Run `bash` command outside the [sandbox](https://code.visualstudio.com/docs/copilot/concepts/trust-and-safety#_agent-sandboxing)?');
 			strictEqual(result?.confirmationMessages?.allowAutoConfirm, undefined);
 			const terminalData = result?.toolSpecificData as IChatTerminalToolInvocationData;
 			strictEqual(terminalData.requestUnsandboxedExecution, true);

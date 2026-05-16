@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/configuration-dsc-schema/0.2
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/winget-cli/master/schemas/JSON/configuration/configuration.schema.0.2.json
 # Reference: https://github.com/microsoft/vscode/wiki/How-to-Contribute
 properties:
   resources:

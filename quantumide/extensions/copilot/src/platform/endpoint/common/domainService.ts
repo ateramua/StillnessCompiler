@@ -14,7 +14,7 @@ export interface IDomainChangeEvent {
 }
 
 // This doesn't really have a great home, but this file talks about domains so seemed best
-export const FEEDBACK_URL = 'https://aka.ms/microsoft/vscode-copilot-release';
+export const FEEDBACK_URL = 'https://github.com/ateramua/StillnessCompiler/issues/new';
 
 /**
  * Very simple service used for dynamically setting the domains we use for API calls

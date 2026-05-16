@@ -80,8 +80,8 @@ suite('.match', function () {
 			stub.calledWith(
 				sinon.match({
 					scheme: 'https',
-					authority: 'aka.ms',
-					path: '/github-copilot-settings',
+					authority: 'docs.github.com',
+					path: '/en/copilot/managing-copilot',
 				})
 			)
 		);

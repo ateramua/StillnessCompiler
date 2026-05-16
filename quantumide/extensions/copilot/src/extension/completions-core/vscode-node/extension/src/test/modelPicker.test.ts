@@ -117,7 +117,7 @@ suite('ModelPickerManager unit tests', function () {
 		assert(openUrlStub.calledOnce, 'openUrl should be called once');
 		assert.strictEqual(
 			openUrlStub.firstCall.args[0].toString(),
-			'https://aka.ms/CopilotCompletionsModelPickerLearnMore'
+			'https://code.visualstudio.com/docs/copilot/reference/copilot-vscode-features'
 		);
 	});
 });

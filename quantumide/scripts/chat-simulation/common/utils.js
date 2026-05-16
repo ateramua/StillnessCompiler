@@ -129,7 +129,7 @@ async function resolveBuild(buildArg) {
 			const extDir = path.join(DATA_DIR, 'extensions');
 			fs.mkdirSync(extDir, { recursive: true });
 			const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(exePath);
-			const extId = 'GitHub.copilot-chat';
+			const extId = 'quantumide.personal-chat';
 			console.log(`[chat-simulation] Installing ${extId} into ${extDir}...`);
 			const { spawnSync } = require('child_process');
 			const result = spawnSync(cli, [...cliArgs, '--extensions-dir', extDir, '--install-extension', extId], {

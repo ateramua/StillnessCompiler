@@ -12,7 +12,7 @@ import { IExperimentationService } from '../../telemetry/common/nullExperimentat
 import { ITelemetryService } from '../../telemetry/common/telemetry';
 import { ISurveyService } from '../common/surveyService';
 
-const SURVEY_URI = 'https://aka.ms/vscode-gh-copilot';
+const SURVEY_URI = 'https://code.visualstudio.com/docs/copilot/overview';
 const USAGE_DATA_KEY = 'survey.usage';
 const NEXT_SURVEY_DATE_KEY = 'survey.nextSurveyDate';
 const DAYS_14 = 14 * 24 * 60 * 60 * 1000;

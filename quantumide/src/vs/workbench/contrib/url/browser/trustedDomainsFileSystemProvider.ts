@@ -7,6 +7,7 @@ import { Event } from '../../../../base/common/event.js';
 import { parse } from '../../../../base/common/json.js';
 import { IDisposable } from '../../../../base/common/lifecycle.js';
 import { URI } from '../../../../base/common/uri.js';
+import product from '../../../../platform/product/common/product.js';
 import { IFileDeleteOptions, IFileOverwriteOptions, FileSystemProviderCapabilities, FileType, IFileWriteOptions, IFileService, IStat, IWatchOptions, IFileSystemProviderWithFileReadWriteCapability } from '../../../../platform/files/common/files.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
@@ -53,12 +54,12 @@ function computeTrustedDomainContent(defaultTrustedDomains: string[], trustedDom
 	let content = CONFIG_HELP_TEXT_PRE;
 
 	if (defaultTrustedDomains.length > 0) {
-		content += `// By default, VS Code trusts "localhost" as well as the following domains:\n`;
+		content += `// By default, ${product.nameLong} trusts "localhost" as well as the following domains:\n`;
 		defaultTrustedDomains.forEach(d => {
 			content += `// - "${d}"\n`;
 		});
 	} else {
-		content += `// By default, VS Code trusts "localhost".\n`;
+		content += `// By default, ${product.nameLong} trusts "localhost".\n`;
 	}
 
 	content += CONFIG_HELP_TEXT_AFTER;

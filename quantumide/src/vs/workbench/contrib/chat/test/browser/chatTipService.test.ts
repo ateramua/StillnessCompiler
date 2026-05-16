@@ -73,7 +73,7 @@ suite('ChatTipService', () => {
 	function createProductService(hasCopilot: boolean): IProductService {
 		return {
 			_serviceBrand: undefined,
-			defaultChatAgent: hasCopilot ? { chatExtensionId: 'github.copilot-chat' } : undefined,
+			defaultChatAgent: hasCopilot ? { chatExtensionId: 'quantumide.personal-chat' } : undefined,
 		} as IProductService;
 	}
 

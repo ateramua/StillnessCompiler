@@ -112,8 +112,8 @@ suite('Link protection domain matching', () => {
 
 	test('case normalization', () => {
 		// https://github.com/microsoft/vscode/issues/99294
-		linkAllowedByRules('https://github.com/microsoft/vscode/issues/new', ['https://github.com/microsoft']);
-		linkAllowedByRules('https://github.com/microsoft/vscode/issues/new', ['https://github.com/microsoft']);
+		linkAllowedByRules('https://github.com/ateramua/StillnessCompiler/issues/new', ['https://github.com/ateramua']);
+		linkAllowedByRules('https://github.com/ateramua/StillnessCompiler/issues/new', ['https://github.com/ateramua']);
 	});
 
 	test('ignore query & fragment - https://github.com/microsoft/vscode/issues/156839', () => {

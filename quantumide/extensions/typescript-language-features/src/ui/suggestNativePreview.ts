@@ -56,6 +56,6 @@ export async function suggestNativePreview(
 	if (selection === install) {
 		await vscode.commands.executeCommand('workbench.extensions.installExtension', tsNativeExtensionId);
 	} else if (selection === learnMore) {
-		await vscode.env.openExternal(vscode.Uri.parse('https://aka.ms/vscode-try-ts-7-learn-more'));
+		await vscode.env.openExternal(vscode.Uri.parse('https://code.visualstudio.com/docs/languages/typescript'));
 	}
 }

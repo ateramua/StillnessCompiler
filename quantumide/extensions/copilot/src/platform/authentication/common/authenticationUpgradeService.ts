@@ -94,7 +94,7 @@ export class AuthenticationChatUpgradeService extends Disposable implements IAut
 			await this._authenticationService.getGitHubSession('permissive', {
 				forceNewSession: {
 					detail: l10n.t('To get more relevant Chat results, we need permission to read the contents of your repository on GitHub.'),
-					learnMore: URI.parse('https://aka.ms/copilotRepoScope'),
+					learnMore: URI.parse('https://docs.github.com/en/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-access-to-github-copilot-in-your-organization'),
 				},
 				clearSessionPreference: true
 			});

@@ -41,6 +41,7 @@ import { ICustomizationHarnessService, isPluginCustomizationItem, type ICustomiz
 import { Checkbox } from '../../../../../base/browser/ui/toggle/toggle.js';
 import { IConfigurationService } from '../../../../../platform/configuration/common/configuration.js';
 import { ChatConfiguration } from '../../common/constants.js';
+import product from '../../../../../platform/product/common/product.js';
 
 const $ = DOM.$;
 
@@ -791,7 +792,7 @@ export class PluginListWidget extends Disposable {
 		this.browseButton.enabled = browseMarketplaceAvailable;
 		const browseTitle = browseMarketplaceAvailable
 			? localize('browseMarketplace', "Browse Marketplace")
-			: localize('browseMarketplaceUnsupportedWeb', "Browse Marketplace is not available in VS Code for the Web.");
+			: localize('browseMarketplaceUnsupportedWeb', "Browse Marketplace is not available in {0} for the Web.", product.nameLong);
 		this.browseButton.setTitle(browseTitle);
 		this.browseButton.element.setAttribute('aria-label', browseTitle);
 

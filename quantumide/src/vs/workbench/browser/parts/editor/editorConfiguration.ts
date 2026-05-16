@@ -17,6 +17,8 @@ import { Event } from '../../../../base/common/event.js';
 import { IWorkbenchEnvironmentService } from '../../../services/environment/common/environmentService.js';
 import { ByteSize, getLargeFileConfirmationLimit } from '../../../../platform/files/common/files.js';
 
+const editorGlobPatternsDocUrl = 'https://code.visualstudio.com/docs/editor/codebasics#_advanced-search-options';
+
 export class DynamicEditorConfigurations extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.dynamicEditorConfigurations';
@@ -155,7 +157,7 @@ export class DynamicEditorConfigurations extends Disposable implements IWorkbenc
 			properties: {
 				[editorsAssociationsSettingId]: {
 					type: 'object',
-					markdownDescription: localize('editor.editorAssociations', "Configure [glob patterns](https://aka.ms/vscode-glob-patterns) to editors (for example `\"*.hex\": \"hexEditor.hexedit\"`). These have precedence over the default behavior."),
+					markdownDescription: localize('editor.editorAssociations', "Configure [glob patterns]({0}) to editors (for example `\"*.hex\": \"hexEditor.hexedit\"`). These have precedence over the default behavior.", editorGlobPatternsDocUrl),
 					patternProperties: {
 						'.*': {
 							type: 'string',
@@ -176,7 +178,7 @@ export class DynamicEditorConfigurations extends Disposable implements IWorkbenc
 			properties: {
 				[diffEditorsAssociationsSettingId]: {
 					type: 'object',
-					markdownDescription: localize('editor.diffEditorAssociations', "Configure [glob patterns](https://aka.ms/vscode-glob-patterns) to editors for diff views (for example `\"*.md\": \"vscode.markdown.preview.editor\"`). These override `workbench.editorAssociations` for diffs."),
+					markdownDescription: localize('editor.diffEditorAssociations', "Configure [glob patterns]({0}) to editors for diff views (for example `\"*.md\": \"vscode.markdown.preview.editor\"`). These override `workbench.editorAssociations` for diffs.", editorGlobPatternsDocUrl),
 					patternProperties: {
 						'.*': {
 							type: 'string',

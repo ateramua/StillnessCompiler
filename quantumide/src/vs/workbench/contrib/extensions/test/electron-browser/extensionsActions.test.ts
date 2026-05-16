@@ -2546,7 +2546,7 @@ suite('EnableAIFeaturesInWorkspaceAction', () => {
 
 	setup(() => {
 		setupTest(disposables);
-		instantiationService.stub(IProductService, { defaultChatAgent: { chatExtensionId: 'GitHub.copilot-chat' } } as Partial<IProductService>);
+		instantiationService.stub(IProductService, { defaultChatAgent: { chatExtensionId: 'quantumide.personal-chat' } } as Partial<IProductService>);
 	});
 
 	test('test enable AI in workspace updates workspace setting when AI is disabled globally', async () => {
@@ -2560,14 +2560,14 @@ suite('EnableAIFeaturesInWorkspaceAction', () => {
 			return originalUpdateValue(key, value);
 		};
 
-		const chatExtension = aLocalExtension('copilot-chat', { publisher: 'GitHub' }, { type: ExtensionType.System });
+		const chatExtension = aLocalExtension('personal-chat', { publisher: 'quantumide' }, { type: ExtensionType.System });
 		instantiationService.stubPromise(IExtensionManagementService, 'getInstalled', [chatExtension]);
 
 		const workbenchService = instantiationService.get(IExtensionsWorkbenchService);
 		await workbenchService.queryLocal();
 
 		const extensions = workbenchService.local;
-		const copilotChat = extensions.find(e => e.identifier.id === 'github.copilot-chat');
+		const copilotChat = extensions.find(e => e.identifier.id === 'quantumide.personal-chat');
 		assert.ok(copilotChat);
 
 		const testObject: ExtensionsActions.EnableAIFeaturesInWorkspaceAction = disposables.add(instantiationService.createInstance(ExtensionsActions.EnableAIFeaturesInWorkspaceAction));

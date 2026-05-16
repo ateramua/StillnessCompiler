@@ -194,14 +194,16 @@ export class FeedbackReporter extends Disposable implements IFeedbackReporter {
 	}
 }
 
+/** Fork: “Report issue” deep-link (replaces microsoft/vscode vs vscode-copilot-issues). */
+const COPILOT_ISSUE_REPORTER_URL = 'https://github.com/ateramua/StillnessCompiler/issues/new';
+
 export async function openIssueReporter(args: { title: string; issueBody?: string; data: string; public?: boolean }) {
 	await vscode.commands.executeCommand('workbench.action.openIssueReporter', {
 		extensionId: EXTENSION_ID,
 		issueTitle: args.title,
 		data: args.data,
 		issueBody: args.issueBody ?? '',
-		// team -> vscode-copilot
-		uri: vscode.Uri.parse(args.public ? 'https://github.com/microsoft/vscode' : 'https://github.com/microsoft/vscode-copilot-issues'),
+		uri: vscode.Uri.parse(COPILOT_ISSUE_REPORTER_URL),
 	});
 }
 

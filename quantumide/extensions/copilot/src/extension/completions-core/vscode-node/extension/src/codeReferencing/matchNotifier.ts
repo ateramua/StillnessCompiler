@@ -11,7 +11,7 @@ import { OutputPaneShowCommand } from '../../../lib/src/snippy/constants';
 import { matchNotificationTelemetry, TelemetryActor } from '../../../lib/src/snippy/telemetryHandlers';
 
 const matchCodeMessage =
-	'We found a reference to public code in a recent suggestion. To learn more about public code references, review the [documentation](https://aka.ms/github-copilot-match-public-code).';
+	'We found a reference to public code in a recent suggestion. To learn more about public code references, review the [documentation](https://docs.github.com/en/copilot/concepts/code-referencing).';
 const MatchAction = 'View reference';
 const SettingAction = 'Change setting';
 const CodeReferenceKey = 'codeReference.notified';
@@ -44,7 +44,7 @@ export function notify(accessor: ServicesAccessor) {
 				break;
 			}
 			case SettingAction: {
-				await env.openExternal(Uri.parse('https://aka.ms/github-copilot-settings'));
+				await env.openExternal(Uri.parse('https://docs.github.com/en/copilot/managing-copilot'));
 				break;
 			}
 			case undefined: {

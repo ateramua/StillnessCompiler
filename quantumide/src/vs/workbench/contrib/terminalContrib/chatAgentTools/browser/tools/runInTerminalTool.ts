@@ -23,6 +23,7 @@ import { IConfigurationService } from '../../../../../../platform/configuration/
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IInstantiationService, type ServicesAccessor } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILabelService } from '../../../../../../platform/label/common/label.js';
+import { IProductService } from '../../../../../../platform/product/common/productService.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../../../platform/storage/common/storage.js';
 import { AgentSandboxSettingId } from '../../../../../../platform/sandbox/common/settings.js';
 import { ICommandDetectionCapability, TerminalCapability } from '../../../../../../platform/terminal/common/capabilities/capabilities.js';
@@ -87,7 +88,7 @@ import { ChatElicitationRequestPart } from '../../../../chat/common/model/chatPr
 
 // #region Tool data
 
-const TERMINAL_SANDBOX_DOCUMENTATION_URL = 'https://aka.ms/vscode-sandboxing';
+const TERMINAL_SANDBOX_DOCUMENTATION_URL = 'https://code.visualstudio.com/docs/copilot/concepts/trust-and-safety#_agent-sandboxing';
 const TOOL_REFERENCE_NAME = 'runInTerminal';
 const LEGACY_TOOL_REFERENCE_FULL_NAMES = ['runCommands/runInTerminal'];
 const INPUT_NEEDED_NOTIFICATION_THROTTLE_MS = 5000;
@@ -286,6 +287,7 @@ export async function createRunInTerminalToolData(
 	accessor: ServicesAccessor
 ): Promise<IToolData> {
 	const instantiationService = accessor.get(IInstantiationService);
+	const productService = accessor.get(IProductService);
 	const terminalSandboxService = accessor.get(ITerminalSandboxService);
 	const configurationService = accessor.get(IConfigurationService);
 	const allowToRunUnsandboxedCommands = configurationService.getValue<boolean>(AgentSandboxSettingId.AgentSandboxAllowUnsandboxedCommands) === true;
@@ -330,7 +332,7 @@ export async function createRunInTerminalToolData(
 			type: 'boolean',
 			const: allowToRunUnsandboxedCommands,
 			default: allowToRunUnsandboxedCommands,
-			description: 'Whether this tool invocation is allowed to run commands outside the terminal sandbox. This value is set by VS Code based on chat.agent.sandbox.allowUnsandboxedCommands.'
+			description: `Whether this tool invocation is allowed to run commands outside the terminal sandbox. This value is set by ${productService.nameLong} based on chat.agent.sandbox.allowUnsandboxedCommands.`
 		},
 		requestUnsandboxedExecution: {
 			type: 'boolean',

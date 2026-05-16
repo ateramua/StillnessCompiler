@@ -488,7 +488,7 @@ export class RemoteAgentContribution implements IDisposable {
 							editorContext + '\n' +
 							l10n.t({
 								message: 'Please authorize usage of **@{0}** on {1} and resend your question. [Learn more]({2}).',
-								args: [slug, url.hostname, 'https://aka.ms/vscode-github-chat-extension-editor-context'],
+								args: [slug, url.hostname, 'https://code.visualstudio.com/docs/copilot/chat/copilot-chat'],
 								comment: [`{Locked=']({'}`]
 							}),
 							{ url: response.authorizationUrl },
@@ -514,7 +514,7 @@ export class RemoteAgentContribution implements IDisposable {
 						l10n.t('Grant access to editor context'),
 						l10n.t({
 							message: '**@{0}** would like to read your active file and selection. [Learn More]({1})',
-							args: [slug, 'https://aka.ms/vscode-github-chat-extension-editor-context'],
+							args: [slug, 'https://code.visualstudio.com/docs/copilot/chat/copilot-chat'],
 							comment: [`{Locked=']({'}`]
 						}),
 						{ hasAcknowledgedImplicitReferences: true },

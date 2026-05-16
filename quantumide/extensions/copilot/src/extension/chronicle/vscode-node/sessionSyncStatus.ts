@@ -11,7 +11,7 @@ import { Disposable } from '../../../util/vs/base/common/lifecycle';
 import { ISessionSyncStateService, type SessionSyncState } from '../common/sessionSyncStateService';
 
 const statusTitle = l10n.t('Session Sync');
-const sessionSyncDocsLink = 'https://aka.ms/vscode-copilot-session-sync';
+const sessionSyncDocsLink = 'https://code.visualstudio.com/docs/configure/settings-sync';
 
 /**
  * Shows session sync status in the chat status bar popup.

@@ -2,7 +2,7 @@ steps:
   - script: |
       set -e
 
-      EXTENSION_ID="GitHub.copilot-chat"
+      EXTENSION_ID="quantumide.personal-chat"
       L10N_REPO="https://github.com/microsoft/vscode-extensions-loc.git"
       L10N_DIR="$(Agent.TempDirectory)/vscode-extensions-loc"
 

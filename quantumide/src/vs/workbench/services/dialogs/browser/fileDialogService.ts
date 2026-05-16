@@ -237,7 +237,7 @@ export class FileDialogService extends AbstractFileDialogService implements IFil
 			},
 			{
 				label: localize({ key: 'learnMore', comment: ['&& denotes a mnemonic'] }, "&&Learn More"),
-				run: async () => { await this.openerService.open('https://aka.ms/VSCodeWebLocalFileSystemAccess'); }
+				run: async () => { await this.openerService.open('https://code.visualstudio.com/docs/editor/vscode-web#_file-system-api'); }
 			}
 		];
 		if (context === 'open') {

@@ -113,5 +113,5 @@ export function isCopilotLikeExtension(extensionId: string | undefined): boolean
 		return false;
 	}
 	const extIdLowerCase = extensionId.toLowerCase();
-	return extIdLowerCase === 'github.copilot' || extIdLowerCase === 'github.copilot-chat';
+	return extIdLowerCase === 'github.copilot' || extIdLowerCase === 'github.copilot-chat' || extIdLowerCase === 'quantumide.personal-chat';
 }

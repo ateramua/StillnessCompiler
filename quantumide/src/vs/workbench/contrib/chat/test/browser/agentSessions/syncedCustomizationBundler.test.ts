@@ -17,6 +17,7 @@ import { IAgentHostFileSystemService, SYNCED_CUSTOMIZATION_SCHEME } from '../../
 import { PromptsType } from '../../../common/promptSyntax/promptTypes.js';
 import { TestInstantiationService } from '../../../../../../platform/instantiation/test/common/instantiationServiceMock.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
+import product from '../../../../../../platform/product/common/product.js';
 
 suite('SyncedCustomizationBundler', () => {
 
@@ -75,7 +76,7 @@ suite('SyncedCustomizationBundler', () => {
 		const result = await bundler.bundle([{ uri, type: PromptsType.instructions }]);
 		assert.ok(result, 'should return a result');
 		assert.ok(result.ref.uri, 'should have a URI');
-		assert.strictEqual(result.ref.displayName, 'VS Code Synced Data');
+		assert.strictEqual(result.ref.displayName, `${product.nameShort} Synced Data`);
 		assert.ok(result.ref.nonce, 'should have a nonce');
 
 		// Verify the file was written to the in-memory FS
@@ -147,7 +148,7 @@ suite('SyncedCustomizationBundler', () => {
 		const manifestUri = URI.from({ scheme: SYNCED_CUSTOMIZATION_SCHEME, path: '/test-agent/.plugin/plugin.json' });
 		const manifest = await fileService.readFile(manifestUri);
 		const parsed = JSON.parse(manifest.value.toString());
-		assert.strictEqual(parsed.name, 'VS Code Synced Data');
+		assert.strictEqual(parsed.name, `${product.nameShort} Synced Data`);
 	});
 
 	test('nonce is stable for same content', async () => {

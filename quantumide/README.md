@@ -1,78 +1,54 @@
-# Visual Studio Code - Open Source ("Code - OSS")
-[![Feature Requests](https://img.shields.io/github/issues/microsoft/vscode/feature-request.svg)](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-[![Bugs](https://img.shields.io/github/issues/microsoft/vscode/bug.svg)](https://github.com/microsoft/vscode/issues?utf8=✓&q=is%3Aissue+is%3Aopen+label%3Abug)
-[![Gitter](https://img.shields.io/badge/chat-on%20gitter-yellow.svg)](https://gitter.im/Microsoft/vscode)
+# QuantumIDE (StillnessCompiler)
 
-## The Repository
+QuantumIDE is the editor shell built from this repository’s `quantumide/` tree—a fork of the upstream open-source editor with StillnessCompiler–specific defaults (product identity, issue URLs, telemetry posture, and bundled configuration).
 
-This repository ("`Code - OSS`") is where we (Microsoft) develop the [Visual Studio Code](https://code.visualstudio.com) product together with the community. Not only do we work on code and issues here, but we also publish our [roadmap](https://github.com/microsoft/vscode/wiki/Roadmap), [monthly iteration plans](https://github.com/microsoft/vscode/wiki/Iteration-Plans), and our [endgame plans](https://github.com/microsoft/vscode/wiki/Running-the-Endgame). This source code is available to everyone under the standard [MIT license](https://github.com/microsoft/vscode/blob/main/LICENSE.txt).
+- **Source & issues:** [StillnessCompiler on GitHub](https://github.com/ateramua/StillnessCompiler) — [open an issue](https://github.com/ateramua/StillnessCompiler/issues/new) for bugs and feature requests.
+- **License:** See the repository [LICENSE.txt](LICENSE.txt) (MIT).
 
-## Visual Studio Code
+## Fork documentation hub
 
-<p align="center">
-  <img alt="VS Code in action" src="https://user-images.githubusercontent.com/35271042/118224532-3842c400-b438-11eb-923d-a5f66fa6785a.png">
-</p>
+Use this section as the **in-product “documentation” entry** (`documentationUrl` in `product.json`). Where behavior matches the upstream editor, we link to **canonical upstream docs** so instructions stay accurate; this page explains what belongs to **QuantumIDE / StillnessCompiler** vs. shared editor behavior.
 
-[Visual Studio Code](https://code.visualstudio.com) is a distribution of the `Code - OSS` repository with Microsoft-specific customizations released under a traditional [Microsoft product license](https://code.visualstudio.com/License/).
+### Workspace trust and restricted mode
 
-[Visual Studio Code](https://code.visualstudio.com) combines the simplicity of a code editor with what developers need for their core edit-build-debug cycle. It provides comprehensive code editing, navigation, and understanding support along with lightweight debugging, a rich extensibility model, and lightweight integration with existing tools.
+Workspace trust controls whether the window treats opened folders as safe for automatic task execution, debugging, and extensions. For the full security model and UI behavior, see the **[workspace trust documentation](https://code.visualstudio.com/docs/editor/workspace-trust)** (upstream reference—the feature set is the same in this fork).
 
-Visual Studio Code is updated monthly with new features and bug fixes. You can download it for Windows, macOS, and Linux on [Visual Studio Code's website](https://code.visualstudio.com/Download). To get the latest releases every day, install the [Insiders build](https://code.visualstudio.com/insiders).
+### Telemetry and diagnostics
 
-## Contributing
+This product build is configured with **telemetry disabled by default** in `product.json`. If you enable telemetry or crash reporting in settings, see **[Telemetry](https://code.visualstudio.com/docs/getstarted/telemetry)** for what categories of data mean in the upstream product (behavior is aligned here).
 
-There are many ways in which you can participate in this project, for example:
+### UNC path access on Windows
 
-* [Submit bugs and feature requests](https://github.com/microsoft/vscode/issues), and help us verify as they are checked in
-* Review [source code changes](https://github.com/microsoft/vscode/pulls)
-* Review the [documentation](https://github.com/microsoft/vscode-docs) and make pull requests for anything from typos to and new content.
+Accessing UNC paths can require explicit host allowlisting. See **[UNC path documentation](https://code.visualstudio.com/docs/configure/unc)** for details.
 
-If you are interested in fixing issues and contributing directly to the code base,
-please see the document [How to Contribute](https://github.com/microsoft/vscode/wiki/How-to-Contribute), which covers the following:
+### Editor compatibility reference
 
-* [How to build and run from source](https://github.com/microsoft/vscode/wiki/How-to-Contribute)
-* [The development workflow, including debugging and running tests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#debugging)
-* [Coding guidelines](https://github.com/microsoft/vscode/wiki/Coding-Guidelines)
-* [Submitting pull requests](https://github.com/microsoft/vscode/wiki/How-to-Contribute#pull-requests)
-* [Finding an issue to work on](https://github.com/microsoft/vscode/wiki/How-to-Contribute#where-to-contribute)
-* [Contributing to translations](https://aka.ms/vscodeloc)
+QuantumIDE keeps compatibility with the VS Code extension host and settings schema. For topics such as **glob patterns**, **hot exit**, **remote development**, and **language identifiers**, the upstream docs remain the most accurate references, for example:
 
-## Feedback
+- [Glob patterns & search / file excludes](https://code.visualstudio.com/docs/editor/codebasics#_advanced-search-options)
+- [Auto Save & Hot Exit](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save)
+- [Remote development overview](https://code.visualstudio.com/docs/remote/remote-overview)
+- [When clause contexts](https://code.visualstudio.com/docs/editor/when-clause-contexts)
+- [Integrated terminal](https://code.visualstudio.com/docs/editor/integrated-terminal)
+- [Extension bisect (troubleshooting)](https://code.visualstudio.com/blogs/2021/02/16/extension-bisect)
 
-* Ask a question on [Stack Overflow](https://stackoverflow.com/questions/tagged/vscode)
-* [Request a new feature](CONTRIBUTING.md)
-* Upvote [popular feature requests](https://github.com/microsoft/vscode/issues?q=is%3Aopen+is%3Aissue+label%3Afeature-request+sort%3Areactions-%2B1-desc)
-* [File an issue](https://github.com/microsoft/vscode/issues)
-* Connect with the extension author community on [GitHub Discussions](https://github.com/microsoft/vscode-discussions/discussions) or [Slack](https://aka.ms/vscode-dev-community)
-* Follow [@code](https://x.com/code) and let us know what you think!
+### GitHub Copilot in this fork
 
-See our [wiki](https://github.com/microsoft/vscode/wiki/Feedback-Channels) for a description of each of these channels and information on some other available community-driven channels.
+Copilot-related URLs in `product.json` point at **GitHub’s Copilot documentation** where appropriate, since Copilot is a GitHub product—not QuantumIDE-specific marketing pages.
 
-## Related Projects
+## Introductory videos
 
-Many of the core components and extensions to VS Code live in their own repositories on GitHub. For example, the [node debug adapter](https://github.com/microsoft/vscode-node-debug) and the [mono debug adapter](https://github.com/microsoft/vscode-mono-debug) repositories are separate from each other. For a complete list, please visit the [Related Projects](https://github.com/microsoft/vscode/wiki/Related-Projects) page on our [wiki](https://github.com/microsoft/vscode/wiki).
+Short walkthrough videos for editor basics (shared with the upstream product line): [Introductory videos](https://code.visualstudio.com/docs/getstarted/introvideos).
 
-## Bundled Extensions
+## Building and developing
 
-VS Code includes a set of built-in extensions located in the [extensions](extensions) folder, including grammars and snippets for many languages. Extensions that provide rich language support (inline suggestions, Go to Definition) for a language have the suffix `language-features`. For example, the `json` extension provides coloring for `JSON` and the `json-language-features` extension provides rich language support for `JSON`.
+See the parent repository and `quantumide/` build scripts (for example `npm run compile-check-ts-native`, Electron packaging, and `scripts/` helpers). For container-based development, see [.devcontainer/README.md](.devcontainer/README.md).
 
-## Development Container
+## Community
 
-This repository includes a Visual Studio Code Dev Containers / GitHub Codespaces development container.
+- **Issues & features:** [StillnessCompiler issues](https://github.com/ateramua/StillnessCompiler/issues)
+- **Upstream editor** (compatibility reference): [VS Code documentation](https://code.visualstudio.com/docs)
 
-* For [Dev Containers](https://aka.ms/vscode-remote/download/containers), use the **Dev Containers: Clone Repository in Container Volume...** command which creates a Docker volume for better disk I/O on macOS and Windows.
-  * If you already have VS Code and Docker installed, you can also click [here](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/microsoft/vscode) to get started. This will cause VS Code to automatically install the Dev Containers extension if needed, clone the source code into a container volume, and spin up a dev container for use.
+---
 
-* For Codespaces, install the [GitHub Codespaces](https://marketplace.visualstudio.com/items?itemName=GitHub.codespaces) extension in VS Code, and use the **Codespaces: Create New Codespace** command.
-
-Docker / the Codespace should have at least **4 cores and 6 GB of RAM (8 GB recommended)** to run a full build. See the [development container README](.devcontainer/README.md) for more information.
-
-## Code of Conduct
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/). For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## License
-
-Copyright (c) Microsoft Corporation. All rights reserved.
-
-Licensed under the [MIT](LICENSE.txt) license.
+*The remainder of this file previously mirrored the upstream Microsoft VS Code OSS README; it has been replaced with fork-oriented documentation. For historical upstream marketing text, see the Microsoft `vscode` repository.*

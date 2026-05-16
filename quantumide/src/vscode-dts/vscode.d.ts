@@ -1092,7 +1092,7 @@ declare module 'vscode' {
 		/**
 		 * Specifies the size of the gutter icon.
 		 * Available values are 'auto', 'contain', 'cover' and any percentage value.
-		 * For further information: https://msdn.microsoft.com/en-us/library/jj127316(v=vs.85).aspx
+		 * For further information: https://developer.mozilla.org/en-US/docs/Web/CSS/background-size
 		 */
 		gutterIconSize?: string;
 
@@ -9976,7 +9976,7 @@ declare module 'vscode' {
 		 * Keep in mind that even though webviews are sandboxed, they still allow running scripts and loading arbitrary content,
 		 * so extensions must follow all standard web security best practices when working with webviews. This includes
 		 * properly sanitizing all untrusted input (including content from the workspace) and
-		 * setting a [content security policy](https://aka.ms/vscode-api-webview-csp).
+		 * setting a [content security policy](https://code.visualstudio.com/api/extension-guides/webview#_content-security-policy).
 		 */
 		html: string;
 
@@ -11655,7 +11655,7 @@ declare module 'vscode' {
 		 * @param shellPath Optional path to a custom shell executable to be used in the terminal.
 		 * @param shellArgs Optional args for the custom shell executable. A string can be used on Windows only which
 		 * allows specifying shell args in
-		 * [command-line format](https://msdn.microsoft.com/en-au/08dfcab2-eb6e-49a4-80eb-87d4076c98c6).
+		 * [command-line format](https://learn.microsoft.com/en-us/cpp/cpp/parsing-cpp-command-line-arguments).
 		 * @returns A new Terminal.
 		 * @throws When running in an environment where a new process cannot be started.
 		 */
@@ -12474,7 +12474,7 @@ declare module 'vscode' {
 
 		/**
 		 * Args for the custom shell executable. A string can be used on Windows only which allows
-		 * specifying shell args in [command-line format](https://msdn.microsoft.com/en-au/08dfcab2-eb6e-49a4-80eb-87d4076c98c6).
+		 * specifying shell args in [command-line format](https://learn.microsoft.com/en-us/cpp/cpp/parsing-cpp-command-line-arguments).
 		 */
 		shellArgs?: string[] | string;
 

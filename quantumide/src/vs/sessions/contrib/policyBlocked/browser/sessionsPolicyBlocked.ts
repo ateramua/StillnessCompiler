@@ -93,10 +93,10 @@ export class SessionsPolicyBlockedOverlay extends Disposable {
 		append(description, document.createTextNode(' '));
 		const learnMore = append(description, $('a.sessions-policy-blocked-link')) as HTMLAnchorElement;
 		learnMore.textContent = localize('policyBlocked.learnMore', "Learn more");
-		learnMore.href = 'https://aka.ms/VSCode/Agents/docs';
+		learnMore.href = 'https://code.visualstudio.com/docs/copilot/agents/agents-window';
 		this._register(addDisposableListener(learnMore, EventType.CLICK, (e) => {
 			e.preventDefault();
-			this.openerService.open(URI.parse('https://aka.ms/VSCode/Agents/docs'));
+			this.openerService.open(URI.parse('https://code.visualstudio.com/docs/copilot/agents/agents-window'));
 		}));
 
 		const button = this._register(new Button(card, { ...defaultButtonStyles, secondary: true }));

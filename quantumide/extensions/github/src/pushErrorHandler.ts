@@ -317,7 +317,7 @@ export class GithubPushErrorHandler implements PushErrorHandler {
 		const message = l10n.t('Your push to "{0}/{1}" was rejected by GitHub because push protection is enabled and one or more secrets were detected.', owner, repo);
 		const answer = await window.showWarningMessage(message, { modal: true }, learnMore);
 		if (answer === learnMore) {
-			commands.executeCommand('vscode.open', 'https://aka.ms/vscode-github-push-protection');
+			commands.executeCommand('vscode.open', 'https://docs.github.com/en/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/about-push-protection-for-users-and-admins');
 		}
 	}
 

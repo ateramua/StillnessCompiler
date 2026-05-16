@@ -71,7 +71,7 @@ export class NuGetMcpSetup {
 					state: 'error',
 					error: l10n.t("The '{0}' command was not found. .NET SDK 10 or newer must be installed and available in PATH.", this.dotnet.command),
 					errorType: ValidatePackageErrorType.MissingCommand,
-					helpUri: 'https://aka.ms/vscode-mcp-install/dotnet',
+					helpUri: 'https://code.visualstudio.com/docs/copilot/customization/mcp-servers#_add-an-mcp-server',
 					helpUriLabel: l10n.t("Install .NET SDK"),
 				};
 			} else {
@@ -86,7 +86,7 @@ export class NuGetMcpSetup {
 				state: 'error',
 				error: l10n.t("The installed .NET SDK must be version 10 or newer. Found {0}.", dotnetVersion),
 				errorType: ValidatePackageErrorType.BadCommandVersion,
-				helpUri: 'https://aka.ms/vscode-mcp-install/dotnet',
+				helpUri: 'https://code.visualstudio.com/docs/copilot/customization/mcp-servers#_add-an-mcp-server',
 				helpUriLabel: l10n.t("Update .NET SDK"),
 			};
 		}

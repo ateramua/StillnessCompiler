@@ -202,7 +202,7 @@ export class ContextKeysContribution extends Disposable {
 			const copilotToken = await this._authenticationService.getCopilotToken();
 			const disabled = !copilotToken.isEditorPreviewFeaturesEnabled();
 			if (disabled) {
-				this._logService.warn(`Copilot preview features are disabled by organizational policy. Learn more: https://aka.ms/github-copilot-org-enable-features`);
+				this._logService.warn(`Copilot preview features are disabled by organizational policy. Learn more: https://docs.github.com/en/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-github-copilot-features-in-your-organization`);
 			}
 			commands.executeCommand('setContext', previewFeaturesDisabledContextKey, disabled);
 		} catch (e) {

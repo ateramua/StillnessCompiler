@@ -355,6 +355,7 @@ export class SwitchProductQualityContribution extends Disposable implements IWor
 
 				async run(accessor: ServicesAccessor): Promise<void> {
 					const dialogService = accessor.get(IDialogService);
+					const productService = accessor.get(IProductService);
 					const userDataSyncEnablementService = accessor.get(IUserDataSyncEnablementService);
 					const userDataSyncStoreManagementService = accessor.get(IUserDataSyncStoreManagementService);
 					const storageService = accessor.get(IStorageService);
@@ -368,7 +369,7 @@ export class SwitchProductQualityContribution extends Disposable implements IWor
 						let userDataSyncStoreType: UserDataSyncStoreType | undefined;
 						if (userDataSyncStore && isSwitchingToInsiders && userDataSyncEnablementService.isEnabled()
 							&& !storageService.getBoolean(selectSettingsSyncServiceDialogShownKey, StorageScope.APPLICATION, false)) {
-							userDataSyncStoreType = await this.selectSettingsSyncService(dialogService);
+							userDataSyncStoreType = await this.selectSettingsSyncService(dialogService, productService);
 							if (!userDataSyncStoreType) {
 								return;
 							}
@@ -383,8 +384,8 @@ export class SwitchProductQualityContribution extends Disposable implements IWor
 							type: 'info',
 							message: nls.localize('relaunchMessage', "Changing the version requires a reload to take effect"),
 							detail: newQuality === 'insider' ?
-								nls.localize('relaunchDetailInsiders', "Press the reload button to switch to the Insiders version of VS Code.") :
-								nls.localize('relaunchDetailStable', "Press the reload button to switch to the Stable version of VS Code."),
+								nls.localize('relaunchDetailInsiders', "Press the reload button to switch to the Insiders version of {0}.", productService.nameLong) :
+								nls.localize('relaunchDetailStable', "Press the reload button to switch to the Stable version of {0}.", productService.nameLong),
 							primaryButton: nls.localize({ key: 'reload', comment: ['&& denotes a mnemonic'] }, "&&Reload")
 						});
 
@@ -415,11 +416,11 @@ export class SwitchProductQualityContribution extends Disposable implements IWor
 					}
 				}
 
-				private async selectSettingsSyncService(dialogService: IDialogService): Promise<UserDataSyncStoreType | undefined> {
+				private async selectSettingsSyncService(dialogService: IDialogService, productService: IProductService): Promise<UserDataSyncStoreType | undefined> {
 					const { result } = await dialogService.prompt<UserDataSyncStoreType>({
 						type: Severity.Info,
 						message: nls.localize('selectSyncService.message', "Choose the settings sync service to use after changing the version"),
-						detail: nls.localize('selectSyncService.detail', "The Insiders version of VS Code will synchronize your settings, keybindings, extensions, snippets and UI State using separate insiders settings sync service by default."),
+						detail: nls.localize('selectSyncService.detail', "The Insiders version of {0} will synchronize your settings, keybindings, extensions, snippets and UI State using separate insiders settings sync service by default.", productService.nameLong),
 						buttons: [
 							{
 								label: nls.localize({ key: 'use insiders', comment: ['&& denotes a mnemonic'] }, "&&Insiders"),

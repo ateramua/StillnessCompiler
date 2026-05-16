@@ -376,19 +376,19 @@ suite('URI', () => {
 
 	test('URI - http, query & toString', function () {
 
-		let uri = URI.parse('https://go.microsoft.com/fwlink/?LinkId=518008');
+		let uri = URI.parse('https://code.visualstudio.com/docs/supporting/faq?LinkId=518008');
 		assert.strictEqual(uri.query, 'LinkId=518008');
-		assert.strictEqual(uri.toString(true), 'https://go.microsoft.com/fwlink/?LinkId=518008');
-		assert.strictEqual(uri.toString(), 'https://go.microsoft.com/fwlink/?LinkId%3D518008');
+		assert.strictEqual(uri.toString(true), 'https://code.visualstudio.com/docs/supporting/faq?LinkId=518008');
+		assert.strictEqual(uri.toString(), 'https://code.visualstudio.com/docs/supporting/faq?LinkId%3D518008');
 
 		let uri2 = URI.parse(uri.toString());
 		assert.strictEqual(uri2.query, 'LinkId=518008');
 		assert.strictEqual(uri2.query, uri.query);
 
-		uri = URI.parse('https://go.microsoft.com/fwlink/?LinkId=518008&foö&ké¥=üü');
+		uri = URI.parse('https://code.visualstudio.com/docs/supporting/faq?LinkId=518008&foö&ké¥=üü');
 		assert.strictEqual(uri.query, 'LinkId=518008&foö&ké¥=üü');
-		assert.strictEqual(uri.toString(true), 'https://go.microsoft.com/fwlink/?LinkId=518008&foö&ké¥=üü');
-		assert.strictEqual(uri.toString(), 'https://go.microsoft.com/fwlink/?LinkId%3D518008%26fo%C3%B6%26k%C3%A9%C2%A5%3D%C3%BC%C3%BC');
+		assert.strictEqual(uri.toString(true), 'https://code.visualstudio.com/docs/supporting/faq?LinkId=518008&foö&ké¥=üü');
+		assert.strictEqual(uri.toString(), 'https://code.visualstudio.com/docs/supporting/faq?LinkId%3D518008%26fo%C3%B6%26k%C3%A9%C2%A5%3D%C3%BC%C3%BC');
 
 		uri2 = URI.parse(uri.toString());
 		assert.strictEqual(uri2.query, 'LinkId=518008&foö&ké¥=üü');

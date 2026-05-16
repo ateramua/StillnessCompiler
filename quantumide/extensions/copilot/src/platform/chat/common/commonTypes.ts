@@ -206,7 +206,7 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 	if (fetchResult.capiError?.code?.startsWith('agent_mode_limit_exceeded')) { // Rate limited in agent mode
 		return l10n.t({
 			message: 'Sorry, you have exceeded the agent mode rate limit. Please switch to ask mode and try again in {0}. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -214,13 +214,13 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 		if (fetchResult.isAuto) {
 			return l10n.t({
 				message: 'Sorry, the upstream model provider is currently experiencing high demand. Please try again in {0}. [Learn More]({1})',
-				args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+				args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 				comment: [`{Locked=']({'}`]
 			});
 		}
 		return l10n.t({
 			message: 'Sorry, the upstream model provider is currently experiencing high demand. Please try again in {0} or consider switching to Auto. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -228,14 +228,14 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 		if (copilotPlan === 'free' || copilotPlan === 'individual' || copilotPlan === 'individual_pro') {
 			return l10n.t({
 				message: 'You\'ve hit your session rate limit. Please upgrade your plan or wait {0} for your limit to reset. [Learn More]({1})',
-				args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+				args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 				comment: [`{Locked=']({'}`]
 			});
 		}
 
 		return l10n.t({
 			message: 'You\'ve hit your session rate limit. Please wait {0} for your limit to reset. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -246,14 +246,14 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 			if (fetchResult.isAuto) {
 				return l10n.t({
 					message: 'You\'ve reached your weekly rate limit. Please wait for your limit to reset on {0}. [Learn More]({1})',
-					args: [resetDateString, 'https://aka.ms/github-copilot-rate-limit-error'],
+					args: [resetDateString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 					comment: [`{Locked=']({'}`]
 				});
 			}
 
 			return l10n.t({
 				message: 'You\'ve reached your weekly rate limit. Please switch to the Auto model to continue working or wait for your limit to reset on {0}. [Learn More]({1})',
-				args: [resetDateString, 'https://aka.ms/github-copilot-rate-limit-error'],
+				args: [resetDateString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 				comment: [`{Locked=']({'}`]
 			});
 		}
@@ -261,14 +261,14 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 		if (fetchResult.isAuto) {
 			return l10n.t({
 				message: 'You\'ve reached your weekly rate limit. Please wait {0} for your limit to reset. [Learn More]({1})',
-				args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+				args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 				comment: [`{Locked=']({'}`]
 			});
 		}
 
 		return l10n.t({
 			message: 'You\'ve reached your weekly rate limit. Please switch to the Auto model to continue working or wait {0} for your limit to reset. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -276,20 +276,20 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 		if (fetchResult.isAuto) {
 			return l10n.t({
 				message: 'You\'ve hit the rate limit for this model. Please try again in {0}. [Learn More]({1})',
-				args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+				args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 				comment: [`{Locked=']({'}`]
 			});
 		}
 		return l10n.t({
 			message: 'You\'ve hit the rate limit for this model. Please try switching to Auto or try again in {0}. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
 	if (fetchResult.capiError?.code?.startsWith('integration_rate_limited')) {
 		return l10n.t({
 			message: 'Sorry, GitHub Copilot Chat is currently experiencing high demand. Please try again in {0}. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -298,13 +298,13 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 		if (fetchResult.isAuto) {
 			return l10n.t({
 				message: 'Sorry, you have been rate-limited. Please wait {0} before trying again. [Learn More]({1})\n\nServer Error: {2}\nError Code: {3}',
-				args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error', fetchResult.capiError.message, fetchResult.capiError.code],
+				args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot', fetchResult.capiError.message, fetchResult.capiError.code],
 				comment: [`{Locked=']({'}`]
 			});
 		}
 		return l10n.t({
 			message: 'Sorry, you have been rate-limited. Please wait {0} before trying again or consider switching to Auto. [Learn More]({1})\n\nServer Error: {2}\nError Code: {3}',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error', fetchResult.capiError.message, fetchResult.capiError.code],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot', fetchResult.capiError.message, fetchResult.capiError.code],
 			comment: [`{Locked=']({'}`]
 		});
 	}
@@ -312,13 +312,13 @@ function getRateLimitMessage(fetchResult: ChatFetchError, copilotPlan: string | 
 	if (fetchResult.isAuto) {
 		return l10n.t({
 			message: 'Sorry, your request was rate-limited. Please wait {0} before trying again. [Learn More]({1})',
-			args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+			args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 			comment: [`{Locked=']({'}`]
 		});
 	}
 	return l10n.t({
 		message: 'Sorry, your request was rate-limited. Please wait {0} before trying again or consider switching to Auto. [Learn More]({1})',
-		args: [retryAfterString, 'https://aka.ms/github-copilot-rate-limit-error'],
+		args: [retryAfterString, 'https://docs.github.com/en/copilot/reference/troubleshooting-github-copilot'],
 		comment: [`{Locked=']({'}`]
 	});
 }
@@ -485,8 +485,8 @@ export function getFilteredMessage(category: FilterReason, supportsMarkdown: boo
 			if (supportsMarkdown) {
 				return l10n.t({
 					message:
-						`Sorry, the response matched public code so it was blocked. Please rephrase your prompt. [Learn more](https://aka.ms/copilot-chat-filtered-docs).`,
-					comment: [`{Locked='](https://aka.ms/copilot-chat-filtered-docs)'}`]
+						`Sorry, the response matched public code so it was blocked. Please rephrase your prompt. [Learn more](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot).`,
+					comment: [`{Locked='](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot)'}`]
 				});
 			} else {
 				return l10n.t(`Sorry, the response matched public code so it was blocked. Please rephrase your prompt.`);
@@ -495,8 +495,8 @@ export function getFilteredMessage(category: FilterReason, supportsMarkdown: boo
 			if (supportsMarkdown) {
 				return l10n.t({
 					message:
-						`Sorry, your prompt was filtered by the Responsible AI Service. Please rephrase your prompt and try again. [Learn more](https://aka.ms/copilot-chat-filtered-docs).`,
-					comment: [`{Locked='](https://aka.ms/copilot-chat-filtered-docs)'}`]
+						`Sorry, your prompt was filtered by the Responsible AI Service. Please rephrase your prompt and try again. [Learn more](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot).`,
+					comment: [`{Locked='](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot)'}`]
 				});
 			} else {
 				return l10n.t(`Sorry, your prompt was filtered by the Responsible AI Service. Please rephrase your prompt and try again.`);
@@ -505,8 +505,8 @@ export function getFilteredMessage(category: FilterReason, supportsMarkdown: boo
 			if (supportsMarkdown) {
 				return l10n.t({
 					message:
-						`Sorry, the response was filtered by the Responsible AI Service. Please rephrase your prompt and try again. [Learn more](https://aka.ms/copilot-chat-filtered-docs).`,
-					comment: [`{Locked='](https://aka.ms/copilot-chat-filtered-docs)'}`]
+						`Sorry, the response was filtered by the Responsible AI Service. Please rephrase your prompt and try again. [Learn more](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot).`,
+					comment: [`{Locked='](https://docs.github.com/en/copilot/concepts/responsible-ai-with-github-copilot)'}`]
 				});
 			} else {
 				return l10n.t(`Sorry, the response was filtered by the Responsible AI Service. Please rephrase your prompt and try again.`);

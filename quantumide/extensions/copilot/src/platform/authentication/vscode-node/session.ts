@@ -31,7 +31,7 @@ async function getAuthSession(providerId: string, defaultScopes: string[], getSi
 	if (options.forceNewSession) {
 		const session = await authentication.getSession(providerId, defaultScopes, {
 			...options,
-			forceNewSession: mixin({ learnMore: URI.parse('https://aka.ms/copilotRepoScope') }, options.forceNewSession),
+			forceNewSession: mixin({ learnMore: URI.parse('https://docs.github.com/en/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-access-to-github-copilot-in-your-organization') }, options.forceNewSession),
 			// When GitHub becomes a true multi-account provider, we won't have to clearSessionPreference.
 			clearSessionPreference: true
 		});

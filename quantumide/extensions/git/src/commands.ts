@@ -5623,7 +5623,7 @@ export class CommandCenter {
 					case GitErrorCodes.NoUserNameConfigured:
 					case GitErrorCodes.NoUserEmailConfigured:
 						message = l10n.t('Make sure you configure your "user.name" and "user.email" in git.');
-						choices.set(l10n.t('Learn More'), () => commands.executeCommand('vscode.open', Uri.parse('https://aka.ms/vscode-setup-git')));
+						choices.set(l10n.t('Learn More'), () => commands.executeCommand('vscode.open', Uri.parse('https://code.visualstudio.com/docs/sourcecontrol/intro-to-git')));
 						break;
 					case GitErrorCodes.EmptyCommitMessage:
 						message = l10n.t('Commit operation was cancelled due to empty commit message.');

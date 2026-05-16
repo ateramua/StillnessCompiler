@@ -386,7 +386,7 @@ In this release, we made several UI refinements and performance improvements to 
 
 A typical scenario for working with remote coding agents is to first discuss and plan a task in a local chat session, where you have access to the full context of your codebase, and then delegate the implementation work to a remote coding agent. The remote agent can then work on the task in the background and create a pull request with the solution.
 
-If you're working in a repository that has [Copilot coding agent enabled](https://aka.ms/coding-agent-docs), the **Delegate to coding agent** button in the Chat view now appears by default.
+If you're working in a repository that has [Copilot coding agent enabled](https://code.visualstudio.com/docs/copilot/agents/agents-window), the **Delegate to coding agent** button in the Chat view now appears by default.
 
 ![Screenshot of the Chat view with the Delegate to coding agent button highlighted.](https://code.visualstudio.com/assets/updates/1_105/delegate-button.png)
 
@@ -2298,7 +2298,7 @@ For the past several months, we've had a "Chat" view for asking questions to the
 - **[Agent](https://code.visualstudio.com/docs/copilot/chat/chat-agent-mode)**: Start an agentic coding flow with a set of tools that let it autonomously collect context, run terminal commands, or take other actions to complete a task. Agent mode is enabled for all [VS Code Insiders](https://code.visualstudio.com/insiders/) users, and we are rolling it out to more and more users in VS Code Stable.
 - **[Edit](https://code.visualstudio.com/docs/copilot/chat/copilot-edits)**: In Edit mode, the model can make directed edits to multiple files. Attach `#codebase` to let it find the files to edit automatically. But it won't run terminal commands or do anything else automatically.
 
-> **Note**: If you don't see agent mode in this list, then either it has not yet been enabled for you, or it's disabled by organization policy and needs to be enabled by the [organization owner](https://aka.ms/github-copilot-org-enable-features).
+> **Note**: If you don't see agent mode in this list, then either it has not yet been enabled for you, or it's disabled by organization policy and needs to be enabled by the [organization owner](https://docs.github.com/en/copilot/managing-copilot/managing-github-copilot-in-your-organization/managing-github-copilot-features-in-your-organization).
 
 Besides making your chat experience simpler, this unification enables a few new features for AI-powered code editing:
 

@@ -100,7 +100,7 @@ All test data lives in `allFiles` (prompt-based items) and the `mcpWorkspace/Use
 
 The list widget regroups items from the default chat extension under a "Built-in" header. Three things must be in place for fixtures to exercise this:
 1. Include `BUILTIN_STORAGE` in the harness descriptor's visible sources
-2. Mock `IProductService.defaultChatAgent.chatExtensionId` (e.g., `'GitHub.copilot-chat'`)
+2. Mock `IProductService.defaultChatAgent.chatExtensionId` (e.g., `'quantumide.personal-chat'`)
 3. Give mock items extension provenance via `extensionId` / `extensionDisplayName` matching that ID
 
 Without all three, built-in regrouping silently doesn't run and the fixture only shows flat lists.

@@ -217,7 +217,7 @@ export class InlineEditProviderFeature {
 
 export const learnMoreCommandId = 'github.copilot.debug.inlineEdit.learnMore';
 
-export const learnMoreLink = 'https://aka.ms/vscode-nes';
+export const learnMoreLink = 'https://code.visualstudio.com/docs/copilot/reference/copilot-vscode-features#_next-edit-suggestions-nes';
 
 export const clearCacheCommandId = 'github.copilot.debug.inlineEdit.clearCache';
 export const reportNotebookNESIssueCommandId = 'github.copilot.debug.inlineEdit.reportNotebookNESIssue';
