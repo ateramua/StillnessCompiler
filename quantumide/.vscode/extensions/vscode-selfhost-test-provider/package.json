@@ -1,7 +1,7 @@
 {
   "name": "vscode-selfhost-test-provider",
-  "displayName": "VS Code Selfhost Test Provider",
-  "description": "Test provider for the VS Code project",
+  "displayName": "QuantumIDE Selfhost Test Provider",
+  "description": "Test provider for the QuantumIDE project",
   "enabledApiProposals": [
     "testObserver",
     "testRelatedCode"
