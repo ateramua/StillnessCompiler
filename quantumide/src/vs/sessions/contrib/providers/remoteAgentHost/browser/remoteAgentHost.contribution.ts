@@ -27,6 +27,7 @@ import { ILogService } from '../../../../../platform/log/common/log.js';
 import { INotificationService } from '../../../../../platform/notification/common/notification.js';
 import product from '../../../../../platform/product/common/product.js';
 import { Registry } from '../../../../../platform/registry/common/platform.js';
+import { ISecretStorageService } from '../../../../../platform/secrets/common/secrets.js';
 import { IStorageService } from '../../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../../workbench/common/contributions.js';
 import { registerAction2 } from '../../../../../platform/actions/common/actions.js';
@@ -170,6 +171,7 @@ export class RemoteAgentHostContribution extends Disposable implements IWorkbenc
 		@IAICustomizationWorkspaceService private readonly _customizationWorkspaceService: IAICustomizationWorkspaceService,
 		@ICustomizationHarnessService private readonly _customizationHarnessService: ICustomizationHarnessService,
 		@IStorageService private readonly _storageService: IStorageService,
+		@ISecretStorageService private readonly _secretStorageService: ISecretStorageService,
 		@IAgentPluginService private readonly _agentPluginService: IAgentPluginService,
 		@IAgentHostTerminalService private readonly _agentHostTerminalService: IAgentHostTerminalService,
 		@ITelemetryService private readonly _telemetryService: ITelemetryService,
@@ -710,6 +712,7 @@ export class RemoteAgentHostContribution extends Disposable implements IWorkbenc
 			await authenticateProtectedResources(agents, {
 				authTokenCache,
 				authenticationService: this._authenticationService,
+				secretStorageService: this._secretStorageService,
 				logPrefix: '[RemoteAgentHost]',
 				logService: this._logService,
 				authenticate: request => loggedConnection.authenticate(request),
@@ -732,6 +735,7 @@ export class RemoteAgentHostContribution extends Disposable implements IWorkbenc
 			return await resolveAuthenticationInteractively(protectedResources, {
 				authTokenCache,
 				authenticationService: this._authenticationService,
+				secretStorageService: this._secretStorageService,
 				logPrefix: '[RemoteAgentHost]',
 				logService: this._logService,
 				authenticate: request => loggedConnection.authenticate(request),

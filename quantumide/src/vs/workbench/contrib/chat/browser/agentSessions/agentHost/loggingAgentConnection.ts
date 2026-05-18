@@ -16,6 +16,8 @@ import type { ResourceCopyParams, ResourceCopyResult, ResourceDeleteParams, Reso
 import { Extensions, IOutputChannel, IOutputChannelRegistry, IOutputService } from '../../../../../services/output/common/output.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 
+const REDACTED_VALUE = '<redacted>';
+
 /**
  * JSON replacer that serializes revived URI objects to their string form,
  * keeping the rest of the payload intact.
@@ -36,6 +38,22 @@ function formatPayload(data: unknown): string {
 	} catch {
 		return String(data);
 	}
+}
+
+function redactLogPayload(method: string, data: unknown): unknown {
+	if (method !== 'authenticate' || !isAuthenticateParams(data)) {
+		return data;
+	}
+	return { ...data, token: REDACTED_VALUE };
+}
+
+function isAuthenticateParams(value: unknown): value is AuthenticateParams {
+	return typeof value === 'object'
+		&& value !== null
+		&& 'resource' in value
+		&& 'token' in value
+		&& typeof value.resource === 'string'
+		&& typeof value.token === 'string';
 }
 
 class LoggingAgentSubscription<T> extends Disposable implements IAgentSubscription<T> {
@@ -266,7 +284,7 @@ export class LoggingAgentConnection extends Disposable implements IAgentConnecti
 	// ---- Internal helpers ---------------------------------------------------
 
 	private async _logCall<T>(method: string, params: unknown, fn: () => Promise<T>): Promise<T> {
-		this._log('>>', method, params);
+		this._log('>>', method, redactLogPayload(method, params));
 		try {
 			const result = await fn();
 			this._log('<<', method, result);

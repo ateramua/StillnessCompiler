@@ -299,8 +299,13 @@ export class ExtHostEditorTabs implements IExtHostEditorTabs {
 			return group;
 		});
 
-		// Set the active tab group id
-		const activeTabGroupId = assertReturnsDefined(tabGroups.find(group => group.isActive === true)?.groupId);
+		// Set the active tab group id. During startup/editor restore the main thread can
+		// briefly send a model before an active group is marked; keep the previous active
+		// group when possible instead of failing the extension host tab model.
+		const activeTabGroupId =
+			tabGroups.find(group => group.isActive === true)?.groupId
+			?? tabGroups.find(group => group.groupId === this._activeGroupId)?.groupId
+			?? tabGroups[0]?.groupId;
 		if (activeTabGroupId !== undefined && this._activeGroupId !== activeTabGroupId) {
 			this._activeGroupId = activeTabGroupId;
 		}

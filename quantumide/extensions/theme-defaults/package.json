@@ -14,6 +14,12 @@
   "contributes": {
     "themes": [
       {
+        "id": "QuantumIDE Cyberpunk",
+        "label": "%quantumIDECyberpunkThemeLabel%",
+        "uiTheme": "vs-dark",
+        "path": "./themes/quantumide-cyberpunk.json"
+      },
+      {
         "id": "Light 2026",
         "label": "%light2026ThemeLabel%",
         "uiTheme": "vs",
@@ -80,7 +86,18 @@
         "label": "%minimalIconThemeLabel%",
         "path": "./fileicons/vs_minimal-icon-theme.json"
       }
-    ]
+    ],
+    "configurationDefaults": {
+      "workbench.colorTheme": "QuantumIDE Cyberpunk",
+      "workbench.preferredDarkColorTheme": "QuantumIDE Cyberpunk",
+      "editor.fontFamily": "'JetBrains Mono', 'Geist Mono', 'Cascadia Code', Menlo, Monaco, 'Courier New', monospace",
+      "editor.fontLigatures": true,
+      "editor.cursorBlinking": "smooth",
+      "editor.cursorSmoothCaretAnimation": "on",
+      "editor.letterSpacing": 0.2,
+      "terminal.integrated.cursorStyle": "block",
+      "terminal.integrated.fontFamily": "'JetBrains Mono', 'Geist Mono', 'Cascadia Code', Menlo, Monaco, monospace"
+    }
   },
   "repository": {
     "type": "git",

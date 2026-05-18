@@ -63,6 +63,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { canShowAgentsBanner, createAgentsBanner } from '../../chat/browser/agentSessions/agentSessionsBanner.js';
 
 const configurationKey = 'workbench.startupEditor';
+const quantumIDEOpenAISessionProvider = 'agent-host-openai';
 const MAX_SESSIONS = 6;
 const MAX_REPO_PICKS = 10;
 const MAX_WALKTHROUGHS = 10;
@@ -175,6 +176,9 @@ export class AgentSessionsWelcomePage extends EditorPane {
 		@ILogService private readonly logService: ILogService,
 	) {
 		super(AgentSessionsWelcomePage.ID, group, telemetryService, themeService, storageService);
+		if (this.productService.nameShort === 'QuantumIDE') {
+			this._selectedSessionProvider = quantumIDEOpenAISessionProvider;
+		}
 
 		this.container = $('.agentSessionsWelcome', {
 			role: 'document',

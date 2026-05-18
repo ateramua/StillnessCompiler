@@ -26,6 +26,7 @@ import { IInstantiationService, ServicesAccessor } from '../../../../platform/in
 import { IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { McpAccessValue, McpAutoStartValue, mcpAccessConfig, mcpAutoStartConfig, mcpGalleryServiceEnablementConfig, mcpGalleryServiceUrlConfig, mcpAppsEnabledConfig } from '../../../../platform/mcp/common/mcpManagement.js';
 import product from '../../../../platform/product/common/product.js';
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
 const EDITOR_GLOB_PATTERNS_DOC = 'https://code.visualstudio.com/docs/editor/codebasics#_advanced-search-options';
 const WHEN_CLAUSE_CONTEXTS_DOC = 'https://code.visualstudio.com/docs/editor/when-clause-contexts';
 const AGENT_SKILLS_DOC = 'https://code.visualstudio.com/docs/copilot/customization/agent-skills';
@@ -988,7 +989,7 @@ configurationRegistry.registerConfiguration({
 		[AgentHostEnabledSettingId]: {
 			type: 'boolean',
 			description: nls.localize('chat.agentHost.enabled', "When enabled, some agents run in a separate agent host process."),
-			default: false,
+			default: isQuantumIDEProduct,
 			tags: ['experimental', 'advanced'],
 			included: product.quality !== 'stable',
 		},
@@ -1649,7 +1650,7 @@ configurationRegistry.registerConfiguration({
 		'chat.allowAnonymousAccess': { // TODO@bpasero remove me eventually
 			type: 'boolean',
 			description: nls.localize('chat.allowAnonymousAccess', "Controls whether anonymous access is allowed in chat."),
-			default: false,
+			default: isQuantumIDEProduct,
 			tags: ['experimental'],
 			experiment: {
 				mode: 'auto'

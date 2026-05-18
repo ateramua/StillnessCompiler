@@ -59,6 +59,7 @@ import { IChatWidgetService } from '../../../browser/chat.js';
 import { ChatQuestionCarouselData } from '../../../common/model/chatProgressTypes/chatQuestionCarouselData.js';
 import { ChatElicitationRequestPart } from '../../../common/model/chatProgressTypes/chatElicitationRequestPart.js';
 import type { IChatModel, IChatPendingRequest, IChatRequestModel } from '../../../common/model/chatModel.js';
+import { IQuantumIDEWorkspaceContextService } from '../../../../../services/quantumide/common/quantumideWorkspaceContext.js';
 
 // ---- Mock agent host service ------------------------------------------------
 
@@ -91,6 +92,7 @@ class MockAgentHostService extends mock<IAgentHostService>() {
 	public createSessionCalls: IAgentCreateSessionConfig[] = [];
 	public disposedSessions: URI[] = [];
 	public agents = [{ provider: 'copilot' as const, displayName: 'Agent Host - Copilot', description: 'test', requiresAuth: true }];
+	public forceUnhydratedSessionSubscriptions = false;
 
 	/**
 	 * If set, the next {@link createSession} call seeds the session summary's
@@ -114,7 +116,7 @@ class MockAgentHostService extends mock<IAgentHostService>() {
 		this._sessions.set(id, { session, startTime: Date.now(), modifiedTime: Date.now() });
 		// Simulate the server's eager active-client claim: if the caller
 		// provided activeClient, seed the session state so subscribers see it.
-		if (config?.activeClient) {
+		if (config?.activeClient && !this.forceUnhydratedSessionSubscriptions) {
 			const summary: SessionSummary = {
 				resource: session.toString(),
 				provider: 'copilot',
@@ -226,6 +228,22 @@ class MockAgentHostService extends mock<IAgentHostService>() {
 		let initialState: SessionState;
 		if (existingState) {
 			initialState = existingState;
+		} else if (this.forceUnhydratedSessionSubscriptions && _kind === StateComponents.Session) {
+			const sub: IAgentSubscription<T> = {
+				value: undefined,
+				verifiedValue: undefined,
+				onDidChange: emitter.event,
+				onWillApplyAction: onWillApply.event,
+				onDidApplyAction: onDidApply.event,
+			};
+			return {
+				object: sub,
+				dispose: () => {
+					emitter.dispose();
+					onWillApply.dispose();
+					onDidApply.dispose();
+				},
+			};
 		} else {
 			const summary: SessionSummary = {
 				resource: resourceStr,
@@ -407,6 +425,12 @@ function createTestServices(disposables: DisposableStore, workingDirectoryResolv
 	});
 	instantiationService.stub(IOutputService, { getChannel: () => undefined });
 	instantiationService.stub(IWorkspaceContextService, { getWorkspace: () => ({ id: '', folders: [] }), getWorkspaceFolder: () => null });
+	instantiationService.stub(IQuantumIDEWorkspaceContextService, {
+		onDidChangeGraph: Event.None,
+		getWorkspaceGraph: () => undefined,
+		refreshWorkspaceGraph: async () => { throw new Error('not implemented in this test'); },
+		buildWorkspaceContext: async () => '',
+	});
 	instantiationService.stub(IChatEditingService, {
 		registerEditingSessionProvider: () => toDisposable(() => { }),
 	});
@@ -918,6 +942,89 @@ suite('AgentHostChatContribution', () => {
 			assert.strictEqual(agentHostService.turnActions[0].action.type, 'session/turnStarted');
 			assert.strictEqual((agentHostService.turnActions[0].action as ITurnStartedAction).userMessage.text, 'Hello');
 			assert.strictEqual(AgentSession.id(URI.parse(session)), 'new-turntest');
+		}));
+
+		test('dispatches turnStarted after subscription hydration timeout', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createContribution(disposables);
+			agentHostService.forceUnhydratedSessionSubscriptions = true;
+
+			const sessionResource = URI.from({ scheme: 'agent-host-copilot', path: '/slow-hydration' });
+			const chatSession = await sessionHandler.provideChatSessionContent(sessionResource, CancellationToken.None);
+			disposables.add(toDisposable(() => chatSession.dispose()));
+			agentHostService.dispatchedActions.length = 0;
+
+			const collected: IChatProgress[][] = [];
+			const registered = chatAgentService.registeredAgents.get('agent-host-copilot')!;
+			const turnPromise = registered.impl.invoke(
+				makeRequest({ message: 'Hello after hydration timeout', sessionResource }),
+				parts => collected.push(parts),
+				[],
+				CancellationToken.None,
+			);
+
+			await timeout(2100);
+
+			assert.strictEqual(agentHostService.turnActions.length, 1);
+			const turnAction = agentHostService.turnActions[0].action as ITurnStartedAction;
+			assert.strictEqual(turnAction.userMessage.text, 'Hello after hydration timeout');
+
+			agentHostService.fireAction({
+				action: {
+					type: ActionType.SessionDelta,
+					session: turnAction.session,
+					turnId: turnAction.turnId,
+					partId: 'raw-md',
+					content: 'raw fallback response',
+				} as SessionAction,
+				serverSeq: 1,
+				origin: undefined,
+			});
+			agentHostService.fireAction({
+				action: { type: ActionType.SessionTurnComplete, session: turnAction.session, turnId: turnAction.turnId } as SessionAction,
+				serverSeq: 2,
+				origin: undefined,
+			});
+
+			await turnPromise;
+			const markdown = collected.flat().find((p): p is IChatMarkdownContent => p.kind === 'markdownContent');
+			assert.strictEqual(textOf(markdown?.content), 'raw fallback response');
+		}));
+
+		test('raw Agent Host errors terminate an unhydrated UI turn', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createContribution(disposables);
+			agentHostService.forceUnhydratedSessionSubscriptions = true;
+
+			const sessionResource = URI.from({ scheme: 'agent-host-copilot', path: '/slow-error' });
+			const chatSession = await sessionHandler.provideChatSessionContent(sessionResource, CancellationToken.None);
+			disposables.add(toDisposable(() => chatSession.dispose()));
+			agentHostService.dispatchedActions.length = 0;
+
+			const collected: IChatProgress[][] = [];
+			const registered = chatAgentService.registeredAgents.get('agent-host-copilot')!;
+			const turnPromise = registered.impl.invoke(
+				makeRequest({ message: 'Return a clear error', sessionResource }),
+				parts => collected.push(parts),
+				[],
+				CancellationToken.None,
+			);
+
+			await timeout(2100);
+
+			const turnAction = agentHostService.turnActions[0].action as ITurnStartedAction;
+			agentHostService.fireAction({
+				action: {
+					type: ActionType.SessionError,
+					session: turnAction.session,
+					turnId: turnAction.turnId,
+					error: { errorType: 'openai-request-failed', message: 'Invalid API key' },
+				} as SessionAction,
+				serverSeq: 1,
+				origin: undefined,
+			});
+
+			await turnPromise;
+			const markdown = collected.flat().find((p): p is IChatMarkdownContent => p.kind === 'markdownContent');
+			assert.strictEqual(textOf(markdown?.content), '\n\nError: (openai-request-failed) Invalid API key');
 		}));
 
 		test('reuses SDK session for same resource on second message', () => runWithFakedTimers({ useFakeTimers: true }, async () => {

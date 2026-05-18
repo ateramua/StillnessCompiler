@@ -7,6 +7,8 @@ import { URI } from '../../../../../../base/common/uri.js';
 import { type ProtectedResourceMetadata } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { type AgentInfo } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
+import { QuantumIDEOpenAIApiKeySecretStorageKey, QuantumIDEOpenAIProtectedResourceId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
+import { ISecretStorageService } from '../../../../../../platform/secrets/common/secrets.js';
 import { IAuthenticationService } from '../../../../../services/authentication/common/authentication.js';
 
 /**
@@ -115,9 +117,27 @@ export interface IAgentHostAuthenticateRequest {
 export interface IAgentHostAuthenticationOptions {
 	readonly authTokenCache?: AgentHostAuthTokenCache;
 	readonly authenticationService: IAuthenticationService;
+	readonly secretStorageService?: ISecretStorageService;
 	readonly logPrefix: string;
 	readonly logService: ILogService;
 	readonly authenticate: (request: IAgentHostAuthenticateRequest) => Promise<unknown>;
+}
+
+async function resolveAgentHostTokenForResource(
+	resource: ProtectedResourceMetadata,
+	options: IAgentHostAuthenticationOptions,
+): Promise<string | undefined> {
+	if (resource.resource === QuantumIDEOpenAIProtectedResourceId) {
+		return options.secretStorageService?.get(QuantumIDEOpenAIApiKeySecretStorageKey);
+	}
+	return resolveTokenForResource(
+		URI.parse(resource.resource),
+		resource.authorization_servers ?? [],
+		resource.scopes_supported ?? [],
+		options.authenticationService,
+		options.logService,
+		options.logPrefix,
+	);
 }
 
 /**
@@ -130,17 +150,9 @@ export async function authenticateProtectedResources(
 ): Promise<void> {
 	for (const agent of agents) {
 		for (const resource of agent.protectedResources ?? []) {
-			const resourceUri = URI.parse(resource.resource);
-			const token = await resolveTokenForResource(
-				resourceUri,
-				resource.authorization_servers ?? [],
-				resource.scopes_supported ?? [],
-				options.authenticationService,
-				options.logService,
-				options.logPrefix,
-			);
+			const token = await resolveAgentHostTokenForResource(resource, options);
 			if (!token) {
-				options.logService.info(`${options.logPrefix} No token resolved for resource: ${resource.resource}`);
+				options.logService.trace(`${options.logPrefix} No token resolved for resource: ${resource.resource}`);
 				continue;
 			}
 
@@ -170,14 +182,7 @@ export async function resolveAuthenticationInteractively(
 ): Promise<boolean> {
 	for (const resource of protectedResources) {
 		const resourceUri = URI.parse(resource.resource);
-		const token = await resolveTokenForResource(
-			resourceUri,
-			resource.authorization_servers ?? [],
-			resource.scopes_supported ?? [],
-			options.authenticationService,
-			options.logService,
-			options.logPrefix,
-		);
+		const token = await resolveAgentHostTokenForResource(resource, options);
 		if (token) {
 			await options.authenticate({ resource: resource.resource, token });
 			options.authTokenCache?.updateAndIsChanged(resource.resource, token);

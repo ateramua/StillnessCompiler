@@ -39,6 +39,8 @@ const defaultChat = {
 	completionsAdvancedSetting: product.defaultChatAgent?.completionsAdvancedSetting ?? '',
 };
 
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
+
 export interface IChatSetupControllerOptions {
 	readonly forceSignIn?: boolean;
 	readonly useSocialProvider?: string;
@@ -112,6 +114,10 @@ export class ChatSetupController extends Disposable {
 
 		let success: ChatSetupResultValue = false;
 		try {
+			if (isQuantumIDEProduct && this.context.state.entitlement === ChatEntitlement.Unknown) {
+				options = { ...options, forceSignIn: false, forceAnonymous: ChatSetupAnonymous.EnabledWithoutDialog };
+			}
+
 			let entitlement: ChatEntitlement | undefined;
 
 			let signIn: boolean;
@@ -192,6 +198,11 @@ export class ChatSetupController extends Disposable {
 		}
 
 		try {
+			if (isQuantumIDEProduct && options.forceAnonymous) {
+				this.telemetryService.publicLog2<InstallChatEvent, InstallChatClassification>('commandCenter.chatInstall', { installResult: wasRunning ? 'alreadyInstalled' : 'installed', installDuration: watch.elapsed(), signUpErrorCode: undefined, provider });
+				return true;
+			}
+
 			if (
 				!options.forceAnonymous &&						// User is not asking for anonymous access
 				entitlement !== ChatEntitlement.Free &&			// User is not signed up to Copilot Free
@@ -270,6 +281,10 @@ export class ChatSetupController extends Disposable {
 	}
 
 	async setupWithProvider(options: IChatSetupControllerOptions): Promise<ChatSetupResultValue> {
+		if (isQuantumIDEProduct && options.forceAnonymous) {
+			return this.setup(options);
+		}
+
 		const registry = Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration);
 		registry.registerConfiguration({
 			'id': 'copilot.setup',

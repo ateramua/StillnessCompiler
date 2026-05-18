@@ -32,6 +32,7 @@ import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { observableConfigValue } from '../../../../../../platform/observable/common/platformObservableUtils.js';
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../../../platform/product/common/productService.js';
+import { QuantumIDEOpenAIProviderId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
 import { IWorkspaceContextService } from '../../../../../../platform/workspace/common/workspace.js';
 import { IAgentHostTerminalService } from '../../../../terminal/browser/agentHostTerminalService.js';
 import { ITerminalChatService } from '../../../../terminal/browser/terminal.js';
@@ -55,6 +56,7 @@ import { AgentHostEditingSession } from './agentHostEditingSession.js';
 import { IAgentHostSessionWorkingDirectoryResolver } from './agentHostSessionWorkingDirectoryResolver.js';
 import { IAgentHostUntitledProvisionalSessionService } from './agentHostUntitledProvisionalSessionService.js';
 import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallToSerialized, finalizeToolInvocation, getTerminalContentUri, isSubagentTool, makeAhpTerminalToolSessionId, parseAhpTerminalToolSessionId, rawMarkdownToString, stringOrMarkdownToString, toolCallStateToInvocation, turnsToHistory, updateRunningToolSpecificData, userMessageToVariableData, type IToolCallFileEdit, type TurnModelLookup } from './stateToProgressAdapter.js';
+import { IQuantumIDEWorkspaceContextService } from '../../../../../services/quantumide/common/quantumideWorkspaceContext.js';
 
 // =============================================================================
 // AgentHostSessionHandler - renderer-side handler for a single agent host
@@ -63,6 +65,8 @@ import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallTo
 // changes, and dispatches client actions (turnStarted, toolCallConfirmed,
 // turnCancelled) back to the server.
 // =============================================================================
+
+const SESSION_SUBSCRIPTION_HYDRATION_TIMEOUT_MS = 2_000;
 
 /**
  * Options threaded into {@link AgentHostSessionHandler._observeTurn}. The
@@ -410,6 +414,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		@IChatWidgetService private readonly _chatWidgetService: IChatWidgetService,
 		@ILanguageModelsService private readonly _languageModelsService: ILanguageModelsService,
 		@IOpenerService private readonly _openerService: IOpenerService,
+		@IQuantumIDEWorkspaceContextService private readonly _quantumIDEWorkspaceContextService: IQuantumIDEWorkspaceContextService,
 	) {
 		super();
 		this._config = config;
@@ -1065,6 +1070,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		const turnId = request.requestId;
 		this._clientDispatchedTurnIds.add(turnId);
 		const messageAttachments = await this._convertVariablesToAttachments(request);
+		await this._appendQuantumIDEWorkspaceContextAttachment(messageAttachments);
 		if (cancellationToken.isCancellationRequested) {
 			return;
 		}
@@ -1123,6 +1129,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
 			},
 		};
+		this._logService.info(`[AgentHost] Dispatching turnStarted session=${session.toString()} turn=${turnId} attachments=${messageAttachments.length}`);
 		this._config.connection.dispatch(turnAction);
 
 		// Ensure the editing session records a sentinel checkpoint for this
@@ -1138,6 +1145,38 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		// `cancellationToken` fires, then calls `onTurnEnded(undefined)`.
 		return new Promise<Turn | undefined>(resolve => {
 			const store = new DisposableStore();
+			let stateProgressSeen = false;
+			let rawCompletedTurn: Turn | undefined;
+			const rawProgress = (parts: IChatProgress[]) => {
+				if (!stateProgressSeen && parts.length > 0) {
+					progress(parts);
+				}
+			};
+			store.add(this._config.connection.onDidAction(envelope => {
+				const action = envelope.action;
+				if (!('session' in action) || action.session !== session.toString()) {
+					return;
+				}
+				if (!('turnId' in action) || action.turnId !== turnId) {
+					return;
+				}
+				if (action.type === ActionType.SessionDelta) {
+					rawProgress([{ kind: 'markdownContent', content: rawMarkdownToString(action.content, this._config.connectionAuthority, { supportHtml: true }) }]);
+				} else if (action.type === ActionType.SessionError) {
+					rawCompletedTurn = { id: turnId, userMessage: { text: request.message }, responseParts: [], usage: undefined, state: TurnState.Error, error: action.error };
+					rawProgress([{ kind: 'markdownContent', content: new MarkdownString(`\n\nError: (${action.error.errorType}) ${action.error.message}`) }]);
+					store.dispose();
+					this._clientDispatchedTurnIds.delete(turnId);
+					this._activeSessions.get(request.sessionResource)?.isCompleteObs.set(true, undefined);
+					resolve(rawCompletedTurn);
+				} else if (action.type === ActionType.SessionTurnComplete) {
+					this._logService.info(`[AgentHost] Raw turn complete observed session=${session.toString()} turn=${turnId}`);
+					store.dispose();
+					this._clientDispatchedTurnIds.delete(turnId);
+					this._activeSessions.get(request.sessionResource)?.isCompleteObs.set(true, undefined);
+					resolve(rawCompletedTurn);
+				}
+			}));
 			const cancelSub = store.add(cancellationToken.onCancellationRequested(() => {
 				cancelSub.dispose();
 				this._logService.info(`[AgentHost] Cancellation requested for ${session.toString()}, dispatching turnCancelled`);
@@ -1152,7 +1191,12 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				backendSession: session,
 				sessionResource: request.sessionResource,
 				turnId,
-				sink: progress,
+				sink: parts => {
+					if (parts.length > 0) {
+						stateProgressSeen = true;
+					}
+					progress(parts);
+				},
 				cancellationToken,
 				onTurnEnded: (lastTurn) => {
 					store.dispose();
@@ -2501,13 +2545,28 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			// subscription concurrently and triggers `handleSnapshot`
 			// between our `_getSessionState` check and the listener
 			// attachment.
+			let timedOut = false;
 			await new Promise<void>(resolve => {
-				const d = newSub.onDidChange(() => { d.dispose(); resolve(); });
+				let d: IDisposable | undefined;
+				const handle = setTimeout(() => {
+					timedOut = true;
+					d?.dispose();
+					resolve();
+				}, SESSION_SUBSCRIPTION_HYDRATION_TIMEOUT_MS);
+				d = newSub.onDidChange(() => {
+					d?.dispose();
+					clearTimeout(handle);
+					resolve();
+				});
 				if (this._getSessionState(session.toString())) {
 					d.dispose();
+					clearTimeout(handle);
 					resolve();
 				}
 			});
+			if (timedOut) {
+				this._logService.warn(`[AgentHost] Session subscription did not hydrate within ${SESSION_SUBSCRIPTION_HYDRATION_TIMEOUT_MS}ms for ${session.toString()}; continuing to dispatch turn.`);
+			}
 		}
 
 		// Start syncing the chat model's pending requests to the protocol
@@ -2660,6 +2719,31 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 
 	private _convertVariablesToAttachments(request: IChatAgentRequest): MessageAttachment[] {
 		return this._variableEntriesToAttachments(request.variables.variables, request.sessionResource);
+	}
+
+	private async _appendQuantumIDEWorkspaceContextAttachment(attachments: MessageAttachment[]): Promise<void> {
+		if (this._config.provider !== QuantumIDEOpenAIProviderId) {
+			return;
+		}
+		try {
+			const context = await this._quantumIDEWorkspaceContextService.buildWorkspaceContext({
+				maxChars: 14_000,
+				includeActiveEditor: true,
+				includeDiagnostics: true,
+				includeSCM: true,
+			});
+			if (!context.trim()) {
+				return;
+			}
+			attachments.unshift({
+				type: MessageAttachmentKind.Simple,
+				label: 'QuantumIDE workspace context',
+				modelRepresentation: context,
+				_meta: { source: 'quantumide-workspace-intelligence', automatic: true },
+			});
+		} catch (error) {
+			this._logService.warn('[AgentHost] Failed to build QuantumIDE workspace context attachment', error);
+		}
 	}
 
 	private _variableEntriesToAttachments(variables: readonly IChatRequestVariableEntry[], sessionResource: URI): MessageAttachment[] {

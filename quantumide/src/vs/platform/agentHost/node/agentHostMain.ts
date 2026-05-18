@@ -24,6 +24,7 @@ import { CopilotApiService, ICopilotApiService } from './shared/copilotApiServic
 import { ClaudeAgent } from './claude/claudeAgent.js';
 import { ClaudeAgentSdkService, IClaudeAgentSdkService } from './claude/claudeAgentSdkService.js';
 import { ClaudeProxyService, IClaudeProxyService } from './claude/claudeProxyService.js';
+import { OpenAIAgent } from './openai/openAiAgent.js';
 import { IAgentHostOTelService } from '../common/otel/agentHostOTelService.js';
 import { AgentHostOTelService } from './otel/agentHostOTelService.js';
 import { ProtocolServerHandler } from './protocolServerHandler.js';
@@ -131,6 +132,10 @@ function startAgentHost(): void {
 
 		diServices.set(IAgentHostTerminalManager, agentService.terminalManager);
 		diServices.set(IAgentConfigurationService, agentService.configurationService);
+		// QuantumIDE ChatGPT/OpenAI provider. The API key is delivered either
+		// through the existing protected-resource authenticate channel or the
+		// developer environment override consumed by OpenAIAgent.
+		agentService.registerProvider(instantiationService.createInstance(OpenAIAgent));
 		agentService.registerProvider(instantiationService.createInstance(CopilotAgent));
 		// The Claude agent provider is opt-in. Gated on the
 		// `chat.agentHost.claudeAgent.path` workbench setting being non-empty,

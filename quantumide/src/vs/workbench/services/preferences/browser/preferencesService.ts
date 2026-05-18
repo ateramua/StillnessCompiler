@@ -697,6 +697,12 @@ export class PreferencesService extends Disposable implements IPreferencesServic
 		const openSettingsOptions: IOpenSettingsOptions = {};
 		if (setting) {
 			openSettingsOptions.query = settingId;
+		} else if (settingInfo.length > 1) {
+			// Category-style deep links such as `quantumide://settings/ai/models`
+			// are not individual setting IDs. Treat the path as a Settings UI
+			// search so product-specific pages can deep link without a parallel
+			// settings router.
+			openSettingsOptions.query = settingInfo.join(' ');
 		}
 
 		this.openSettings(openSettingsOptions);

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<defs>
+		<linearGradient id="icon-bg" x1="128" y1="80" x2="896" y2="944" gradientUnits="userSpaceOnUse">
+			<stop offset="0" stop-color="#32FF88"/>
+			<stop offset="0.5" stop-color="#00C46A"/>
+			<stop offset="1" stop-color="#006B3F"/>
+		</linearGradient>
+		<radialGradient id="icon-glow" cx="50%" cy="35%" r="58%">
+			<stop offset="0" stop-color="#A9FFD0" stop-opacity="0.56"/>
+			<stop offset="0.48" stop-color="#32FF88" stop-opacity="0.12"/>
+			<stop offset="1" stop-color="#001F12" stop-opacity="0"/>
+		</radialGradient>
+		<filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+			<feDropShadow dx="0" dy="34" stdDeviation="38" flood-color="#00170D" flood-opacity="0.55"/>
+		</filter>
+		<filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%">
+			<feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#003B22" flood-opacity="0.5"/>
+		</filter>
+	</defs>
+	<rect width="1024" height="1024" rx="230" fill="#06100B"/>
+	<rect x="72" y="72" width="880" height="880" rx="198" fill="url(#icon-bg)" filter="url(#soft-shadow)"/>
+	<rect x="72" y="72" width="880" height="880" rx="198" fill="url(#icon-glow)"/>
+	<path d="M170 300C240 192 358 132 512 132C666 132 784 192 854 300" fill="none" stroke="#B9FFD5" stroke-opacity="0.24" stroke-width="18" stroke-linecap="round"/>
+	<path d="M164 728C240 824 356 876 512 876C668 876 784 824 860 728" fill="none" stroke="#002F1D" stroke-opacity="0.28" stroke-width="22" stroke-linecap="round"/>
+	<rect x="168" y="448" width="688" height="128" rx="42" fill="#052417" fill-opacity="0.28" stroke="#DFFFF0" stroke-opacity="0.2" stroke-width="2"/>
+	<text x="512" y="535"
+		text-anchor="middle"
+		font-family="Inter, SF Pro Display, IBM Plex Sans, Arial, sans-serif"
+		font-size="92"
+		font-weight="700"
+		letter-spacing="4"
+		fill="#FFFFFF"
+		filter="url(#text-shadow)">QuantumIDE</text>
+</svg>

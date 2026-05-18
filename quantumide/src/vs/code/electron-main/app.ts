@@ -1109,7 +1109,8 @@ export class CodeApplication extends Disposable {
 		services.set(ILocalPtyService, ptyHostService);
 
 		// Agent Host
-		if (this.configurationService.getValue(AgentHostEnabledSettingId)) {
+		const isQuantumIDEProduct = this.productService.applicationName === 'quantumide' || this.productService.nameShort.startsWith('QuantumIDE');
+		if (this.configurationService.getValue(AgentHostEnabledSettingId) || isQuantumIDEProduct) {
 			const agentHostStarter = new ElectronAgentHostStarter(this.configurationService, this.environmentMainService, this.lifecycleMainService, this.logService);
 			this._register(new AgentHostProcessManager(agentHostStarter, this.logService, this.loggerService));
 		}

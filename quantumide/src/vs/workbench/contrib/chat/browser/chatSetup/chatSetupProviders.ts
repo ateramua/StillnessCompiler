@@ -28,7 +28,8 @@ import { ChatEntitlement, ChatEntitlementContext, IChatEntitlementService } from
 import { ChatModel, ChatRequestModel, IChatRequestModel, IChatRequestVariableData } from '../../common/model/chatModel.js';
 import { ChatMode } from '../../common/chatModes.js';
 import { ChatRequestAgentPart, ChatRequestToolPart } from '../../common/requestParser/chatParserTypes.js';
-import { IChatProgress, IChatService } from '../../common/chatService/chatService.js';
+import { ChatSendResult, IChatProgress, IChatService } from '../../common/chatService/chatService.js';
+import { IChatSessionsService } from '../../common/chatSessionsService.js';
 import { IChatRequestToolEntry } from '../../common/attachments/chatVariableEntries.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind } from '../../common/constants.js';
 import { ILanguageModelsService } from '../../common/languageModels.js';
@@ -64,6 +65,11 @@ const defaultChat = {
 	outputChannelId: product.defaultChatAgent?.chatExtensionOutputId ?? '',
 	outputExtensionStateCommand: product.defaultChatAgent?.chatExtensionOutputExtensionStateCommand ?? '',
 };
+
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
+const QUANTUMIDE_OPENAI_SESSION_TYPE = 'agent-host-openai';
+const QUANTUMIDE_OPENAI_PROVIDER_WAIT_ATTEMPTS = 60;
+const QUANTUMIDE_OPENAI_PROVIDER_WAIT_INTERVAL_MS = 500;
 
 const ToolsAgentContextKey = ContextKeyExpr.and(
 	ContextKeyExpr.equals(`config.${ChatConfiguration.AgentEnabled}`, true),
@@ -244,6 +250,60 @@ export class SetupAgent extends Disposable implements IChatAgentImplementation {
 
 	async invoke(request: IChatAgentRequest, progress: (parts: IChatProgress[]) => void): Promise<IChatAgentResult> {
 		return this.instantiationService.invokeFunction(async accessor /* using accessor for lazy loading */ => {
+			if (isQuantumIDEProduct) {
+				const chatSessionsService = accessor.get(IChatSessionsService);
+				const chatService = accessor.get(IChatService);
+				const logService = accessor.get(ILogService);
+				const view = await accessor.get(IViewsService).openView(ChatViewId) as ChatViewPane | undefined;
+				let canResolveOpenAI = false;
+				for (let attempt = 0; attempt < QUANTUMIDE_OPENAI_PROVIDER_WAIT_ATTEMPTS; attempt++) {
+					canResolveOpenAI = await chatSessionsService.canResolveChatSession(QUANTUMIDE_OPENAI_SESSION_TYPE);
+					if (canResolveOpenAI) {
+						break;
+					}
+					await timeout(QUANTUMIDE_OPENAI_PROVIDER_WAIT_INTERVAL_MS);
+				}
+				if (!canResolveOpenAI) {
+					logService.warn(`[QuantumIDE] OpenAI chat session provider '${QUANTUMIDE_OPENAI_SESSION_TYPE}' is not available.`);
+					view?.widget.setInput(request.message);
+					view?.widget.focusInput();
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(localize('quantumideOpenAIUnavailable', "QuantumIDE could not start the OpenAI chat provider yet. Try QuantumIDE: New Agent Chat, then send your message there."))
+					}]);
+					return {};
+				}
+				const newItem = await chatSessionsService.createNewChatSessionItem(QUANTUMIDE_OPENAI_SESSION_TYPE, { prompt: request.message }, CancellationToken.None);
+				if (!newItem || !view) {
+					view?.widget.setInput(request.message);
+					view?.widget.focusInput();
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(localize('quantumideOpenAISessionOpened', "Opened a QuantumIDE OpenAI agent chat. Press Enter there to send your request."))
+					}]);
+					return {};
+				}
+				await view.loadSession(newItem.resource);
+				view.widget.focusInput();
+				const result = await chatService.sendRequest(newItem.resource, request.message, {
+					agentIdSilent: QUANTUMIDE_OPENAI_SESSION_TYPE,
+					attachedContext: [...request.variables.variables],
+				});
+				if (ChatSendResult.isRejected(result)) {
+					logService.warn(`[QuantumIDE] OpenAI chat request was rejected: ${result.reason}`);
+					progress([{
+						kind: 'markdownContent',
+						content: new MarkdownString(localize('quantumideOpenAIRequestRejected', "QuantumIDE opened the OpenAI chat, but the request was rejected: {0}", result.reason))
+					}]);
+					return {};
+				}
+				progress([{
+					kind: 'markdownContent',
+					content: new MarkdownString(localize('quantumideOpenAISessionOpened', "Opened a QuantumIDE OpenAI agent chat for this request."))
+				}]);
+				return {};
+			}
+
 			const chatService = accessor.get(IChatService);
 			const languageModelsService = accessor.get(ILanguageModelsService);
 			const chatWidgetService = accessor.get(IChatWidgetService);

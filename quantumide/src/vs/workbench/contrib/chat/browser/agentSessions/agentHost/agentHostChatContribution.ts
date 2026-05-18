@@ -10,6 +10,7 @@ import { observableValue } from '../../../../../../base/common/observable.js';
 import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { localize } from '../../../../../../nls.js';
 import { AgentHostEnabledSettingId, IAgentHostService, type AgentProvider } from '../../../../../../platform/agentHost/common/agentService.js';
+import { ActionType } from '../../../../../../platform/agentHost/common/state/sessionActions.js';
 import { type ProtectedResourceMetadata } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { type AgentInfo, type CustomizationRef, type RootState } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
@@ -17,6 +18,10 @@ import { IDefaultAccountService } from '../../../../../../platform/defaultAccoun
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
+import product from '../../../../../../platform/product/common/product.js';
+import { QuantumIDEAISettingId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
+import { defaultQuantumIDEModelRoutes, QuantumIDEModelRouterConfigKey, sanitizeQuantumIDEModelRoutes } from '../../../../../../platform/quantumide/common/quantumideModelRouter.js';
+import { ISecretStorageService } from '../../../../../../platform/secrets/common/secrets.js';
 import { IStorageService } from '../../../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution } from '../../../../../common/contributions.js';
 import { IAgentHostFileSystemService } from '../../../../../services/agentHost/common/agentHostFileSystemService.js';
@@ -39,6 +44,8 @@ import { SyncedCustomizationBundler } from './syncedCustomizationBundler.js';
 
 export { AgentHostSessionHandler } from './agentHostSessionHandler.js';
 export { AgentHostSessionListController } from './agentHostSessionListController.js';
+
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
 
 /**
  * Discovers available agents from the agent host process and dynamically
@@ -73,19 +80,20 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		@ILanguageModelsService private readonly _languageModelsService: ILanguageModelsService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IAgentHostFileSystemService _agentHostFileSystemService: IAgentHostFileSystemService,
-		@IConfigurationService configurationService: IConfigurationService,
+		@IConfigurationService private readonly _configurationService: IConfigurationService,
 		@ICustomizationHarnessService private readonly _customizationHarnessService: ICustomizationHarnessService,
 		@IStorageService private readonly _storageService: IStorageService,
 		@IAgentPluginService private readonly _agentPluginService: IAgentPluginService,
 		@IPromptsService private readonly _promptsService: IPromptsService,
 		@IFileService private readonly _fileService: IFileService,
+		@ISecretStorageService private readonly _secretStorageService: ISecretStorageService,
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 	) {
 		super();
 
 		this._isSessionsWindow = environmentService.isSessionsWindow;
 
-		if (!configurationService.getValue<boolean>(AgentHostEnabledSettingId)) {
+		if (!this._configurationService.getValue<boolean>(AgentHostEnabledSettingId) && !isQuantumIDEProduct) {
 			return;
 		}
 
@@ -97,6 +105,19 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			'Agent Host (Local)'));
 
 		this._register(_agentHostFileSystemService.registerAuthority('local', this._agentHostService));
+		if (isQuantumIDEProduct) {
+			this._syncQuantumIDEModelRouterConfig();
+			this._register(this._configurationService.onDidChangeConfiguration(event => {
+				if (
+					event.affectsConfiguration(QuantumIDEAISettingId.ModelRouterRoutes)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT41Enabled)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT41MiniEnabled)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT4oEnabled)
+				) {
+					this._syncQuantumIDEModelRouterConfig();
+				}
+			}));
+		}
 
 		// React to root state changes (agent discovery / removal)
 		this._register(this._agentHostService.rootState.onDidChange(rootState => {
@@ -181,11 +202,16 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			},
 		}));
 
-		// Session list controller
+		// Session list controller. In QuantumIDE's OpenAI-first local flow,
+		// avoid registering unauthenticated Copilot session lists: the list
+		// refresh probes GitHub/Copilot and creates noisy auth failures even
+		// when the user is only using the OpenAI provider.
 		const listController = store.add(this._instantiationService.createInstance(AgentHostSessionListController, sessionType, agent.provider, this._loggedConnection!, undefined, 'local'));
-		this._listControllers.set(agent.provider, listController);
-		store.add({ dispose: () => this._listControllers.delete(agent.provider) });
-		store.add(this._chatSessionsService.registerChatSessionItemController(sessionType, listController));
+		if (!isQuantumIDEProduct || agent.provider === 'openai') {
+			this._listControllers.set(agent.provider, listController);
+			store.add({ dispose: () => this._listControllers.delete(agent.provider) });
+			store.add(this._chatSessionsService.registerChatSessionItemController(sessionType, listController));
+		}
 
 		// Customization disable provider + item provider + bundler + observable
 		const syncProvider = store.add(new AgentCustomizationSyncProvider(sessionType, this._storageService));
@@ -266,6 +292,28 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		return (rootState && !(rootState instanceof Error)) ? rootState.agents : [];
 	}
 
+	private _syncQuantumIDEModelRouterConfig(): void {
+		const routes = this._withBuiltInRouteToggles(sanitizeQuantumIDEModelRoutes(
+			this._configurationService.getValue<unknown>(QuantumIDEAISettingId.ModelRouterRoutes),
+			defaultQuantumIDEModelRoutes,
+		));
+		this._loggedConnection?.dispatch({
+			type: ActionType.RootConfigChanged,
+			config: {
+				[QuantumIDEModelRouterConfigKey]: routes,
+			},
+		});
+	}
+
+	private _withBuiltInRouteToggles(routes: ReturnType<typeof sanitizeQuantumIDEModelRoutes>): ReturnType<typeof sanitizeQuantumIDEModelRoutes> {
+		const toggles = new Map<string, boolean>([
+			['openai.gpt-4.1', this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIGPT41Enabled) !== false],
+			['openai.gpt-4.1-mini', this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIGPT41MiniEnabled) !== false],
+			['openai.gpt-4o', this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIGPT4oEnabled) !== false],
+		]);
+		return routes.map(route => toggles.has(route.id) ? { ...route, enabled: toggles.get(route.id) } : route);
+	}
+
 	/**
 	 * Authenticate using protectedResources from agent info in root state.
 	 * Resolves tokens via the standard VS Code authentication service.
@@ -276,6 +324,7 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			await authenticateProtectedResources(agents, {
 				authTokenCache: this._authTokenCache,
 				authenticationService: this._authenticationService,
+				secretStorageService: this._secretStorageService,
 				logPrefix: '[AgentHost]',
 				logService: this._logService,
 				authenticate: request => this._loggedConnection!.authenticate(request),
@@ -299,6 +348,7 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			return await resolveAuthenticationInteractively(protectedResources, {
 				authTokenCache: this._authTokenCache,
 				authenticationService: this._authenticationService,
+				secretStorageService: this._secretStorageService,
 				logPrefix: '[AgentHost]',
 				logService: this._logService,
 				authenticate: request => this._loggedConnection!.authenticate(request),

@@ -21,6 +21,7 @@ import { UtilityProcess } from '../../utilityProcess/electron-main/utilityProces
 import { IAgentHostConnection, IAgentHostStarter } from '../common/agent.js';
 import { AgentHostClaudeAgentSdkPathSettingId, AgentHostClaudeSdkPathEnvVar, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, buildAgentHostOTelEnv } from '../common/agentService.js';
 import { deepClone } from '../../../base/common/objects.js';
+import { getQuantumIDEEnvCandidateDirectories, readQuantumIDEEnvFiles } from '../../quantumide/node/quantumideEnv.js';
 
 export class ElectronAgentHostStarter extends Disposable implements IAgentHostStarter {
 
@@ -63,6 +64,11 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 		// Resolve user shell environment so spawned tools/terminals inherit
 		// PATH and other vars from the user's login shell (macOS/Linux GUI launches).
 		const shellEnv = await this._resolveShellEnv();
+		const parentEnv = { ...deepClone(process.env), ...shellEnv };
+		const quantumideEnv = readQuantumIDEEnvFiles(
+			getQuantumIDEEnvCandidateDirectories(this._environmentMainService.appRoot, this._environmentMainService.userDataPath),
+			parentEnv,
+		);
 
 		// Gate optional providers via env vars consumed by `agentHostMain.ts`.
 		// The Claude agent is opt-in: enabled when the user points the SDK path
@@ -95,8 +101,8 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 				'--user-data-dir', this._environmentMainService.userDataPath,
 			],
 			env: {
-				...deepClone(process.env),
-				...shellEnv,
+				...parentEnv,
+				...quantumideEnv,
 				VSCODE_ESM_ENTRYPOINT: 'vs/platform/agentHost/node/agentHostMain',
 				VSCODE_PIPE_LOGGING: 'true',
 				VSCODE_VERBOSE_LOGGING: 'true',

@@ -47,6 +47,7 @@ import { toAgentClientUri } from '../common/agentClientUri.js';
  * provider-side session, worktree, and on-disk state.
  */
 const SESSION_GC_GRACE_MS = 30_000;
+const ATTACHMENT_REWRITE_TIMEOUT_MS = 5_000;
 
 /**
  * The agent service implementation that runs inside the agent-host utility
@@ -860,11 +861,32 @@ export class AgentService extends Disposable implements IAgentService {
 		}
 		const attachmentsRoot = this._attachmentsRoot(URI.parse(action.session));
 		const attachmentsRootStr = attachmentsRoot.toString();
-		const rewritten = await Promise.all(attachments.map(a => this._rewriteSingleAttachment(a, attachmentsRoot, attachmentsRootStr, clientId)));
+		const rewritten = await Promise.all(attachments.map(a => this._withTimeout(
+			this._rewriteSingleAttachment(a, attachmentsRoot, attachmentsRootStr, clientId),
+			ATTACHMENT_REWRITE_TIMEOUT_MS,
+			`rewrite attachment '${a.label}'`,
+		).catch(err => {
+			this._logService.warn(`[AgentService] ${toErrorMessage(err)}; preserving original attachment '${a.label}'`);
+			return a;
+		})));
 		return {
 			...action,
 			userMessage: { ...action.userMessage, attachments: rewritten },
 		};
+	}
+
+	private async _withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+		let handle: ReturnType<typeof setTimeout> | undefined;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			handle = setTimeout(() => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)), timeoutMs);
+		});
+		try {
+			return await Promise.race([promise, timeoutPromise]);
+		} finally {
+			if (handle) {
+				clearTimeout(handle);
+			}
+		}
 	}
 
 	private async _rewriteSingleAttachment(attachment: MessageAttachment, attachmentsRoot: URI, attachmentsRootStr: string, clientId: string): Promise<MessageAttachment> {

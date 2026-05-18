@@ -81,6 +81,7 @@ import './services/editor/browser/editorResolverService.js';
 import './services/aiEmbeddingVector/common/aiEmbeddingVectorService.js';
 import './services/aiRelatedInformation/common/aiRelatedInformationService.js';
 import './services/aiSettingsSearch/common/aiSettingsSearchService.js';
+import './services/quantumide/browser/quantumideWorkspaceContextService.js';
 import './services/history/browser/historyService.js';
 import './services/activity/browser/activityService.js';
 import './services/keybinding/browser/keybindingService.js';
@@ -377,6 +378,7 @@ import './contrib/surveys/browser/languageSurveys.contribution.js';
 // Welcome
 import './contrib/welcomeGettingStarted/browser/gettingStarted.contribution.js';
 import './contrib/welcomeAgentSessions/browser/agentSessionsWelcome.contribution.js';
+import './browser/quantumideAI.contribution.js';
 import './browser/quantumideConfigurationDefaults.js';
 import './browser/quantumideMenu.contribution.js';
 import './browser/quantumideStatusBar.contribution.js';

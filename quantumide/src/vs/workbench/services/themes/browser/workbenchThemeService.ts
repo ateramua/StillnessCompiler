@@ -51,6 +51,19 @@ import product from '../../../../platform/product/common/product.js';
 // implementation
 
 const defaultThemeExtensionId = 'vscode-theme-defaults';
+const quantumIDECyberpunkTheme = 'QuantumIDE Cyberpunk';
+const quantumIDECyberpunkMigrationStorageKey = 'quantumide.cyberpunkThemeMigration';
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
+const quantumIDEStockDarkThemes = new Set([
+	'Dark 2026',
+	'Dark Modern',
+	'Dark+',
+	'Visual Studio Dark',
+	'Default Dark Modern',
+	'Default Dark+',
+	'VS Code Dark',
+	'Experimental Dark'
+]);
 
 const DEFAULT_FILE_ICON_THEME_ID = 'vscode.vscode-theme-seti-vs-seti';
 const fileIconsEnabledClass = 'file-icons-enabled';
@@ -181,7 +194,9 @@ export class WorkbenchThemeService extends Disposable implements IWorkbenchTheme
 			this.installConfigurationListener();
 			this.installPreferredSchemeListener();
 			this.installRegistryListeners();
-			this.initialize(previousColorThemeSetting).catch(errors.onUnexpectedError);
+			this.migrateQuantumIDECyberpunkThemeIfNeeded()
+				.then(() => this.initialize(previousColorThemeSetting))
+				.catch(errors.onUnexpectedError);
 		});
 
 		const codiconStyleSheet = createStyleSheet();
@@ -254,6 +269,21 @@ export class WorkbenchThemeService extends Disposable implements IWorkbenchTheme
 	}
 
 	private static readonly NEW_THEME_NOTIFICATION_KEY = 'workbench.newDefaultThemeNotification';
+
+	private async migrateQuantumIDECyberpunkThemeIfNeeded(): Promise<void> {
+		if (!isQuantumIDEProduct || this.storageService.getBoolean(quantumIDECyberpunkMigrationStorageKey, StorageScope.APPLICATION)) {
+			return;
+		}
+
+		try {
+			const currentTheme = this.settings.colorTheme;
+			if (currentTheme === quantumIDECyberpunkTheme || quantumIDEStockDarkThemes.has(currentTheme)) {
+				await this.settings.setColorTheme({ settingsId: quantumIDECyberpunkTheme } as IWorkbenchColorTheme, ConfigurationTarget.USER);
+			}
+		} finally {
+			this.storageService.store(quantumIDECyberpunkMigrationStorageKey, true, StorageScope.APPLICATION, StorageTarget.USER);
+		}
+	}
 
 	private async showNewDefaultThemeNotification(previousSettingsId: string | undefined): Promise<void> {
 		if (this.storageService.getBoolean(WorkbenchThemeService.NEW_THEME_NOTIFICATION_KEY, StorageScope.APPLICATION)) {

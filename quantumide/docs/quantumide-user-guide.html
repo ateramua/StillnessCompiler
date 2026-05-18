@@ -18,8 +18,8 @@
 <section id="agent-sessions" class="section reveal" style="--accent:#fb7185">
   <div class="section-head"><div><span class="badge">03 / Documentation route</span><h2>Agent Sessions</h2></div><span class="badge">Deep link ready</span></div>
   <div class="grid" style="grid-template-columns:1.2fr .8fr">
-    <div class="card"><h3>Overview</h3><p>Use session providers, customization, synced prompts, and remote agent hosts.</p><div class="callout card"><strong>Smart tip</strong><p class="muted">Use the command palette with Cmd/Ctrl+K to jump directly to this section, then print or export the guide when sharing with a team.</p></div></div>
-    <div class="card"><h3>Checklist</h3><ul><li>Confirm prerequisites.</li><li>Follow the primary workflow.</li><li>Validate completion state.</li><li>Use troubleshooting if blocked.</li></ul></div>
+    <div class="card"><h3>Overview</h3><p>Use ChatGPT/OpenAI agent sessions, customization, synced prompts, and remote agent hosts. For local OpenAI development, copy .env.example to .env and set QUANTUMIDE_OPENAI_API_KEY. Optional overrides are QUANTUMIDE_OPENAI_BASE_URL and QUANTUMIDE_OPENAI_MODEL.</p><div class="callout card"><strong>Smart tip</strong><p class="muted">When the chat panel says Analyzing, the Agent Host is reading context, dispatching the turn, and calling the OpenAI-compatible /chat/completions API. Missing keys, invalid keys, model errors, quota errors, and request timeouts are surfaced in the chat instead of requiring GitHub sign-in.</p></div></div>
+    <div class="card"><h3>Checklist</h3><ul><li>Confirm .env contains QUANTUMIDE_OPENAI_API_KEY.</li><li>Launch with npm run dev or the packaged app.</li><li>Open Chat and verify ChatGPT / OpenAI is selected.</li><li>Send a simple prompt and confirm a response or clear OpenAI error.</li></ul></div>
   </div>
 </section>
 <section id="extensions" class="section reveal" style="--accent:#22c55e">
@@ -42,7 +42,11 @@
     <div class="card"><h3>Overview</h3><p>Diagnose workspace, extension host, terminal, and compile failures.</p><div class="callout card"><strong>Smart tip</strong><p class="muted">Use the command palette with Cmd/Ctrl+K to jump directly to this section, then print or export the guide when sharing with a team.</p></div></div>
     <div class="card"><h3>Checklist</h3><ul><li>Confirm prerequisites.</li><li>Follow the primary workflow.</li><li>Validate completion state.</li><li>Use troubleshooting if blocked.</li></ul></div>
   </div>
-</section><section id="commands" class="section reveal"><div class="section-head"><div><span class="badge">Operations</span><h2>Command center</h2></div></div><div class="code"><button class="btn copy">Copy</button><pre># Clean, build, install to Applications, and launch
+</section><section id="commands" class="section reveal"><div class="section-head"><div><span class="badge">Operations</span><h2>Command center</h2></div></div><div class="code"><button class="btn copy">Copy</button><pre># Local OpenAI setup
+cp .env.example .env
+# Edit .env and set QUANTUMIDE_OPENAI_API_KEY. Optional: QUANTUMIDE_OPENAI_BASE_URL, QUANTUMIDE_OPENAI_MODEL.
+
+# Clean, build, install to Applications, and launch
 nvm install 22 && nvm use 22 && cd "/Users/abditeramu/Documents/repos/StillnessCompiler/quantumide" && rm -rf out out-build out-vscode out-vscode-min .build ../VSCode-darwin-arm64 node_modules/.cache && npm install && npm run gulp vscode-darwin-arm64 && rm -rf "/Applications/QuantumIDE.app" && ditto "../VSCode-darwin-arm64/QuantumIDE.app" "/Applications/QuantumIDE.app" && open "/Applications/QuantumIDE.app"
 
 # Clean, install, compile, and launch in development mode

@@ -13,8 +13,48 @@ else
 	fi
 fi
 
+function load_quantumide_env() {
+	local ENV_FILE="$ROOT/.env"
+	if [[ ! -f "$ENV_FILE" ]]; then
+		return
+	fi
+
+	while IFS= read -r LINE || [[ -n "$LINE" ]]; do
+		LINE="${LINE%$'\r'}"
+		if [[ -z "${LINE//[[:space:]]/}" || "$LINE" =~ ^[[:space:]]*# ]]; then
+			continue
+		fi
+		if [[ "$LINE" == export\ * ]]; then
+			LINE="${LINE#export }"
+		fi
+
+		local KEY="${LINE%%=*}"
+		local VALUE="${LINE#*=}"
+		if [[ "$KEY" == "$LINE" || ! "$KEY" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+			continue
+		fi
+
+		case "$KEY" in
+			QUANTUMIDE_OPENAI_API_KEY|QUANTUMIDE_OPENAI_BASE_URL|QUANTUMIDE_OPENAI_MODEL) ;;
+			*) continue ;;
+		esac
+
+		if [[ "$VALUE" == \"*\" && "$VALUE" == *\" ]]; then
+			VALUE="${VALUE:1:${#VALUE}-2}"
+		elif [[ "$VALUE" == \'*\' && "$VALUE" == *\' ]]; then
+			VALUE="${VALUE:1:${#VALUE}-2}"
+		fi
+
+		# Explicit shell exports win over local .env defaults.
+		if [[ -z "${!KEY+x}" ]]; then
+			export "$KEY=$VALUE"
+		fi
+	done < "$ENV_FILE"
+}
+
 function code() {
 	cd "$ROOT"
+	load_quantumide_env
 
 	if [[ "$OSTYPE" == "darwin"* ]]; then
 		NAME=`node -p "require('./product.json').nameLong"`

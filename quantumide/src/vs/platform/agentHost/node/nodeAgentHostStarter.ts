@@ -14,6 +14,7 @@ import { ILogService } from '../../log/common/log.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
 import { IAgentHostConnection, IAgentHostStarter } from '../common/agent.js';
 import { AgentHostClaudeAgentSdkPathSettingId, AgentHostClaudeSdkPathEnvVar, AgentHostOTelCaptureContentSettingId, AgentHostOTelDbSpanExporterEnabledSettingId, AgentHostOTelEnabledSettingId, AgentHostOTelExporterTypeSettingId, AgentHostOTelOtlpEndpointSettingId, AgentHostOTelOutfileSettingId, buildAgentHostOTelEnv } from '../common/agentService.js';
+import { getQuantumIDEEnvCandidateDirectories, readQuantumIDEEnvFiles } from '../../quantumide/node/quantumideEnv.js';
 
 /**
  * Options for configuring the agent host WebSocket server in the child process.
@@ -65,9 +66,14 @@ export class NodeAgentHostStarter extends Disposable implements IAgentHostStarte
 		// Resolve user shell environment so spawned tools/terminals inherit
 		// PATH and other vars from the user's login shell (macOS/Linux).
 		const shellEnv = await this._resolveShellEnv();
+		const quantumideEnv = readQuantumIDEEnvFiles(
+			getQuantumIDEEnvCandidateDirectories(this._environmentService.appRoot, this._environmentService.userDataPath),
+			shellEnv,
+		);
 
 		const env: Record<string, string> = {
 			...shellEnv as Record<string, string>,
+			...quantumideEnv as Record<string, string>,
 			VSCODE_ESM_ENTRYPOINT: 'vs/platform/agentHost/node/agentHostMain',
 			VSCODE_PIPE_LOGGING: 'true',
 			VSCODE_VERBOSE_LOGGING: 'true',

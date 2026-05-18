@@ -42,6 +42,8 @@ const defaultChat = {
 	privacyStatementUrl: product.defaultChatAgent?.privacyStatementUrl ?? ''
 };
 
+const isQuantumIDEProduct = product.applicationName === 'quantumide' || product.nameShort.startsWith('QuantumIDE');
+
 export class ChatSetup {
 
 	private static instance: ChatSetup | undefined = undefined;
@@ -109,6 +111,13 @@ export class ChatSetup {
 			return { dialogSkipped, success: undefined /* canceled */ };
 		}
 
+		const forceQuantumIDEAnonymous = isQuantumIDEProduct
+			&& options?.setupStrategy === undefined
+			&& this.context.state.entitlement === ChatEntitlement.Unknown;
+		if (forceQuantumIDEAnonymous) {
+			options = { ...options, forceSignInDialog: false, forceAnonymous: ChatSetupAnonymous.EnabledWithoutDialog };
+		}
+
 		let setupStrategy: ChatSetupStrategy;
 		if (options?.setupStrategy !== undefined) {
 			setupStrategy = options.setupStrategy; // caller provided a specific strategy, skip dialog
@@ -120,7 +129,7 @@ export class ChatSetup {
 			setupStrategy = await this.showDialog(options);
 		}
 
-		if (setupStrategy === ChatSetupStrategy.DefaultSetup && this.defaultAccountService.getDefaultAccountAuthenticationProvider().enterprise) {
+		if (setupStrategy === ChatSetupStrategy.DefaultSetup && !options?.forceAnonymous && this.defaultAccountService.getDefaultAccountAuthenticationProvider().enterprise) {
 			setupStrategy = ChatSetupStrategy.SetupWithEnterpriseProvider; // users with a configured provider go through provider setup
 		}
 
