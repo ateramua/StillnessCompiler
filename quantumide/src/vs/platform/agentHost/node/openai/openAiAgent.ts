@@ -13,7 +13,7 @@ import { localize } from '../../../../nls.js';
 import { INativeEnvironmentService } from '../../../environment/common/environment.js';
 import { IFileService } from '../../../files/common/files.js';
 import { ILogService } from '../../../log/common/log.js';
-import { QuantumIDEAIProvider, QuantumIDEOpenAIBaseUrlEnvVar, QuantumIDEOpenAIApiKeyEnvVar, QuantumIDEOpenAIProtectedResourceId, QuantumIDEOpenAIProviderId } from '../../../quantumide/common/quantumideAISettings.js';
+import { QuantumIDEAIProvider, QuantumIDEAISettingId, QuantumIDEAgentActivityEnvVar, QuantumIDEOpenAIBaseUrlEnvVar, QuantumIDEOpenAIApiKeyEnvVar, QuantumIDEOpenAIProtectedResourceId, QuantumIDEOpenAIProviderId, QuantumIDEOpenAIStreamEnvVar } from '../../../quantumide/common/quantumideAISettings.js';
 import { defaultQuantumIDEModelRoutes, enabledQuantumIDEModelRoutes, IQuantumIDEModelRoute, QuantumIDEModelRouterConfigKey } from '../../../quantumide/common/quantumideModelRouter.js';
 import { IAgentPluginManager, type ISyncedCustomization } from '../../common/agentPluginManager.js';
 import { createSchema, schemaProperty } from '../../common/agentHostSchema.js';
@@ -23,10 +23,15 @@ import { ISessionDataService } from '../../common/sessionDataService.js';
 import type { ResolveSessionConfigResult, SessionConfigCompletionsResult } from '../../common/state/protocol/commands.js';
 import type { ProtectedResourceMetadata } from '../../common/state/protocol/state.js';
 import { ActionType } from '../../common/state/sessionActions.js';
+import type { SessionActivityChangedAction } from '../../common/state/protocol/actions.js';
 import { CustomizationStatus, MessageAttachmentKind, ResponsePartKind, SessionInputResponseKind, SessionStatus, ToolCallConfirmationReason, ToolCallStatus, ToolResultContentType, TurnState, type CustomizationRef, type MessageAttachment, type ModelSelection, type PendingMessage, type SessionCustomization, type SessionInputAnswer, type ToolCallResult, type ToolDefinition, type Turn } from '../../common/state/sessionState.js';
 import { parsePlugin, type IParsedPlugin, type INamedPluginResource } from '../../../agentPlugins/common/pluginParsers.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
-import { OpenAIClient, type IOpenAIMessage, type IOpenAIToolCall, type IOpenAIToolDefinition } from './openAiClient.js';
+import { OpenAIChatStreamChunkKind, OpenAIClient, OpenAIStreamNotSupportedError, type IOpenAIChatRequest, type IOpenAIChatResponse, type IOpenAIMessage, type IOpenAIToolCall, type IOpenAIToolDefinition } from './openAiClient.js';
+import { getAgentStatusActivityLabel } from '../../../quantumide/common/agentActivityLabels.js';
+import { getOpenAIActivityLabel, type OpenAIActivityVerbosity } from './openaiActivityLabels.js';
+import { executeOpenAIHostTool, isOpenAIHostTool, OPENAI_HOST_ACTIVITY_TOOLS } from './openaiHostTools.js';
+import { OpenAIStreamCoalescer } from './openaiStreamCoalescer.js';
 
 interface IOpenAISessionRecord {
 	readonly session: URI;
@@ -44,6 +49,13 @@ interface IOpenAISessionRecord {
 		readonly turnId: string;
 		readonly abortController: AbortController;
 	};
+	currentActivity?: string;
+	activeTurnToolCalls?: Map<string, IOpenAIActiveToolCallState>;
+}
+
+interface IOpenAIActiveToolCallState {
+	readonly toolCall: IOpenAIToolCall;
+	readonly activity: ReturnType<typeof getOpenAIActivityLabel>;
 }
 
 interface IOpenAIToolApproval {
@@ -80,6 +92,10 @@ const MAX_OPENAI_HISTORY_MESSAGES = 24;
 const MAX_OPENAI_HISTORY_CHARS = 48_000;
 const MAX_OPENAI_CUSTOMIZATION_CHARS = 24_000;
 const MAX_OPENAI_ATTACHMENT_CONTEXT_CHARS = 18_000;
+const DEFAULT_OPENAI_STREAM_COALESCE_MS = 24;
+const MAX_OPENAI_STREAM_COALESCE_MS = 80;
+const DEFAULT_OPENAI_MAX_TOOL_ITERATIONS = 8;
+const DEFAULT_OPENAI_MAX_ACTIVITY_STEPS_PER_TURN = 50;
 
 function defaultOpenAIModels(provider: string): readonly IAgentModelInfo[] {
 	const configured = process.env['QUANTUMIDE_OPENAI_MODEL'] || 'gpt-4.1';
@@ -161,6 +177,33 @@ const OPENAI_PROPOSAL_TOOLS: readonly IOpenAIToolDefinition[] = [
 	},
 ];
 
+const quantumIDEOpenAIConfigSchema = createSchema({
+	[QuantumIDEAISettingId.OpenAIStreamingEnabled]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'OpenAI Streaming Enabled',
+	}),
+	[QuantumIDEAISettingId.OpenAIStreamingCoalesceMs]: schemaProperty<number>({
+		type: 'number',
+		title: 'OpenAI Streaming Coalesce Interval (ms)',
+	}),
+	[QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'OpenAI Adaptive Streaming Coalescing',
+	}),
+	[QuantumIDEAISettingId.AgentMaxToolIterations]: schemaProperty<number>({
+		type: 'number',
+		title: 'OpenAI Max Tool Iterations',
+	}),
+	[QuantumIDEAISettingId.AgentActivityVerbosity]: schemaProperty<string>({
+		type: 'string',
+		title: 'OpenAI Activity Verbosity',
+	}),
+	[QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn]: schemaProperty<number>({
+		type: 'number',
+		title: 'OpenAI Max Activity Steps Per Turn',
+	}),
+});
+
 const quantumIDEModelRouterConfigSchema = createSchema({
 	[QuantumIDEModelRouterConfigKey]: schemaProperty<IQuantumIDEModelRoute[]>({
 		type: 'array',
@@ -184,6 +227,8 @@ const quantumIDEModelRouterConfigSchema = createSchema({
 
 export class OpenAIAgent extends Disposable implements IAgent {
 	readonly id = QuantumIDEOpenAIProviderId;
+
+	private static readonly _streamingSupportedByEndpoint = new Map<string, boolean>();
 
 	private readonly _onDidSessionProgress = this._register(new Emitter<AgentSignal>());
 	readonly onDidSessionProgress = this._onDidSessionProgress.event;
@@ -338,7 +383,10 @@ export class OpenAIAgent extends Disposable implements IAgent {
 
 		const sessionStr = session.toString();
 		const partId = `${turnId}#openai-response`;
+		const reasoningPartId = `${turnId}#openai-reasoning`;
+		record.activeTurnToolCalls = new Map();
 		this._logService.info(`[OpenAI] turn started session=${sessionStr} turn=${turnId} model=${record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1'} attachments=${attachments.length}`);
+		this._setSessionActivity(record, session, getAgentStatusActivityLabel('thinking'));
 		this._onDidSessionProgress.fire({
 			kind: 'action',
 			session,
@@ -360,83 +408,44 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			},
 		});
 
+		let assistantTranscript = '';
+		let streamedText = '';
 		try {
 			const selectedModelId = record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1';
 			const selectedRoute = this._resolveModelRoute(selectedModelId);
 			const client = this._createClientForModel(selectedModelId);
 			const transcript = await this._readTranscript(record);
-			const requestMessages = await this._buildRequestMessages(record, transcript, prompt, attachments);
 			await this._appendTranscript(record, { role: 'user', content: prompt, timestamp: Date.now() });
 			const clientToolNameMap = new Map<string, string>();
-			const response = await client.chat({
+			const streamContext = {
+				session,
+				sessionStr,
+				turnId,
+				partId,
+				reasoningPartId,
+				reasoningPartCreated: false,
+			};
+			const loopResult = await this._runAgentTurnLoop({
+				record,
+				session,
+				sessionStr,
+				turnId,
+				partId,
+				reasoningPartId,
+				client,
 				model: selectedRoute?.model ?? selectedModelId,
-				temperature: this._getSessionTemperature(record),
+				modelId: selectedModelId,
+				initialMessages: await this._buildRequestMessages(record, transcript, prompt, attachments),
+				clientToolNameMap,
+				streamContext,
 				signal: abortController.signal,
-				tools: [
-					...OPENAI_PROPOSAL_TOOLS,
-					...this._getClientOpenAIToolDefinitions(record, clientToolNameMap),
-				],
-				messages: requestMessages,
+				onAnswerDelta: delta => {
+					streamedText += delta;
+					this._emitSessionDelta(session, sessionStr, turnId, partId, delta);
+				},
 			});
-			if (response.text) {
-				this._onDidSessionProgress.fire({
-					kind: 'action',
-					session,
-					action: {
-						type: ActionType.SessionDelta,
-						session: sessionStr,
-						turnId,
-						partId,
-						content: response.text,
-					},
-				});
-				await this._appendTranscript(record, { role: 'assistant', content: response.text, timestamp: Date.now() });
-			}
-			if (response.toolCalls?.length) {
-				const toolSummary = await this._handleToolCalls(session, turnId, response.toolCalls, clientToolNameMap);
-				if (toolSummary) {
-					this._onDidSessionProgress.fire({
-						kind: 'action',
-						session,
-						action: {
-							type: ActionType.SessionDelta,
-							session: sessionStr,
-							turnId,
-							partId,
-							content: `\n\n${toolSummary}`,
-						},
-					});
-					await this._appendTranscript(record, { role: 'assistant', content: toolSummary, timestamp: Date.now() });
-					const followUp = await client.chat({
-						model: record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1',
-						temperature: this._getSessionTemperature(record),
-						signal: abortController.signal,
-						messages: [
-							...requestMessages,
-							...(response.text ? [{ role: 'assistant' as const, content: response.text }] : []),
-							{
-								role: 'user',
-								content: `Tool/proposal results:\n\n${toolSummary}\n\nUse these results to finish your response. If an edit or terminal command was only approved as a proposal, explain the next step instead of claiming it already changed the workspace.`,
-							},
-						],
-					});
-					if (followUp.text) {
-						this._onDidSessionProgress.fire({
-							kind: 'action',
-							session,
-							action: {
-								type: ActionType.SessionDelta,
-								session: sessionStr,
-								turnId,
-								partId,
-								content: `\n\n${followUp.text}`,
-							},
-						});
-						await this._appendTranscript(record, { role: 'assistant', content: followUp.text, timestamp: Date.now() });
-					}
-				}
-			}
-			if (response.inputTokens !== undefined || response.outputTokens !== undefined) {
+			assistantTranscript = loopResult.assistantTranscript;
+			if (loopResult.inputTokens !== undefined || loopResult.outputTokens !== undefined) {
 				this._onDidSessionProgress.fire({
 					kind: 'action',
 					session,
@@ -445,13 +454,14 @@ export class OpenAIAgent extends Disposable implements IAgent {
 						session: sessionStr,
 						turnId,
 						usage: {
-							inputTokens: response.inputTokens,
-							outputTokens: response.outputTokens,
+							inputTokens: loopResult.inputTokens,
+							outputTokens: loopResult.outputTokens,
 						},
 					},
 				});
 			}
-			this._logService.info(`[OpenAI] turn completed session=${sessionStr} turn=${turnId} inputTokens=${response.inputTokens ?? 'unknown'} outputTokens=${response.outputTokens ?? 'unknown'}`);
+			this._logService.info(`[OpenAI] turn completed session=${sessionStr} turn=${turnId} inputTokens=${loopResult.inputTokens ?? 'unknown'} outputTokens=${loopResult.outputTokens ?? 'unknown'} activitySteps=${loopResult.activityStepCount} toolIterations=${loopResult.toolIterations} timeToFirstActivityMs=${loopResult.timeToFirstActivityMs ?? 'n/a'} timeToFirstAnswerMs=${loopResult.timeToFirstAnswerMs ?? 'n/a'}`);
+			this._setSessionActivity(record, session, undefined);
 			await this._persistSessionRecord(record);
 			this._onDidSessionProgress.fire({
 				kind: 'action',
@@ -463,6 +473,27 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				},
 			});
 		} catch (error) {
+			this._setSessionActivity(record, session, undefined);
+			const cancelled = abortController.signal.aborted || (error instanceof Error && error.message.includes('cancelled'));
+			if (cancelled) {
+				this._cancelActiveToolCalls(record, session, sessionStr, turnId);
+				const partial = assistantTranscript || streamedText;
+				if (partial) {
+					await this._appendTranscript(record, { role: 'assistant', content: partial, timestamp: Date.now() }).catch(() => undefined);
+					await this._persistSessionRecord(record).catch(() => undefined);
+				}
+				this._logService.info(`[OpenAI] turn cancelled session=${sessionStr} turn=${turnId}`);
+				this._onDidSessionProgress.fire({
+					kind: 'action',
+					session,
+					action: {
+						type: ActionType.SessionTurnCancelled,
+						session: sessionStr,
+						turnId,
+					},
+				});
+				return;
+			}
 			this._logService.error('[OpenAI] sendMessage failed', error);
 			this._onDidSessionProgress.fire({
 				kind: 'action',
@@ -478,6 +509,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				},
 			});
 		} finally {
+			record.activeTurnToolCalls = undefined;
 			if (record.active?.turnId === turnId) {
 				delete record.active;
 			}
@@ -510,6 +542,8 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		this._denyPendingToolApprovalsForSession(session);
 		if (record?.active) {
 			this._logService.info(`[OpenAI] turn aborted session=${session.toString()} turn=${record.active.turnId}`);
+			this._cancelActiveToolCalls(record, session, session.toString(), record.active.turnId);
+			this._setSessionActivity(record, session, undefined);
 			this._onDidSessionProgress.fire({
 				kind: 'action',
 				session,
@@ -619,6 +653,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				modifiedTime: Date.now(),
 				summary: record.summary ?? 'ChatGPT / OpenAI session',
 				status: record.active ? SessionStatus.InProgress : SessionStatus.Idle,
+				...(record.currentActivity ? { activity: record.currentActivity } : {}),
 			};
 			return {
 				...metadata,
@@ -627,6 +662,397 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				...(record.workingDirectory ? { workingDirectory: record.workingDirectory } : {}),
 			};
 		});
+	}
+
+	private _getMaxToolIterations(): number {
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentMaxToolIterations);
+		if (typeof configured === 'number' && configured >= 1 && configured <= 32) {
+			return configured;
+		}
+		return DEFAULT_OPENAI_MAX_TOOL_ITERATIONS;
+	}
+
+	private _getMaxActivityStepsPerTurn(): number {
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn);
+		if (typeof configured === 'number' && configured >= 1 && configured <= 200) {
+			return configured;
+		}
+		return DEFAULT_OPENAI_MAX_ACTIVITY_STEPS_PER_TURN;
+	}
+
+	private _canEmitActivityStep(activityStepCount: number): boolean {
+		return activityStepCount < this._getMaxActivityStepsPerTurn();
+	}
+
+	private _getActivityVerbosity(): OpenAIActivityVerbosity {
+		if (process.env[QuantumIDEAgentActivityEnvVar] === 'verbose') {
+			return 'verbose';
+		}
+		if (process.env[QuantumIDEAgentActivityEnvVar] === 'minimal') {
+			return 'minimal';
+		}
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentActivityVerbosity);
+		return configured === 'minimal' || configured === 'verbose' ? configured : 'normal';
+	}
+
+	private _trackActiveToolCall(record: IOpenAISessionRecord, toolCall: IOpenAIToolCall, activity: ReturnType<typeof getOpenAIActivityLabel>): void {
+		if (!record.activeTurnToolCalls) {
+			record.activeTurnToolCalls = new Map();
+		}
+		record.activeTurnToolCalls.set(toolCall.id, { toolCall, activity });
+	}
+
+	private _untrackActiveToolCall(record: IOpenAISessionRecord, toolCallId: string): void {
+		record.activeTurnToolCalls?.delete(toolCallId);
+	}
+
+	private _cancelActiveToolCalls(record: IOpenAISessionRecord, session: URI, sessionStr: string, turnId: string): void {
+		if (!record.activeTurnToolCalls?.size) {
+			return;
+		}
+		for (const active of record.activeTurnToolCalls.values()) {
+			this._emitToolCallComplete(session, turnId, active.toolCall, false, active.activity, 'Cancelled by user.');
+		}
+		record.activeTurnToolCalls.clear();
+	}
+
+	private _setSessionActivity(record: IOpenAISessionRecord, session: URI, activity: string | undefined): void {
+		if (record.currentActivity === activity) {
+			return;
+		}
+		record.currentActivity = activity;
+		const activityAction: SessionActivityChangedAction = {
+			type: ActionType.SessionActivityChanged,
+			session: session.toString(),
+			activity,
+		};
+		this._onDidSessionProgress.fire({
+			kind: 'action',
+			session,
+			action: activityAction,
+		});
+	}
+
+	private async _runAgentTurnLoop(options: {
+		record: IOpenAISessionRecord;
+		session: URI;
+		sessionStr: string;
+		turnId: string;
+		partId: string;
+		client: OpenAIClient;
+		model: string;
+		modelId: string;
+		initialMessages: IOpenAIMessage[];
+		clientToolNameMap: Map<string, string>;
+		streamContext: {
+			session: URI;
+			sessionStr: string;
+			turnId: string;
+			partId: string;
+			reasoningPartId: string;
+			reasoningPartCreated: boolean;
+		};
+		reasoningPartId: string;
+		signal: AbortSignal;
+		onAnswerDelta: (delta: string) => void;
+	}): Promise<{
+		assistantTranscript: string;
+		inputTokens?: number;
+		outputTokens?: number;
+		activityStepCount: number;
+		toolIterations: number;
+		timeToFirstActivityMs?: number;
+		timeToFirstAnswerMs?: number;
+	}> {
+		const turnStartedAt = Date.now();
+		let messages = [...options.initialMessages];
+		let assistantTranscript = '';
+		let inputTokens: number | undefined;
+		let outputTokens: number | undefined;
+		let activityStepCount = 0;
+		let toolIterations = 0;
+		let timeToFirstActivityMs: number | undefined;
+		let timeToFirstAnswerMs: number | undefined;
+		const maxIterations = this._getMaxToolIterations();
+		const tools = [
+			...OPENAI_HOST_ACTIVITY_TOOLS,
+			...OPENAI_PROPOSAL_TOOLS,
+			...this._getClientOpenAIToolDefinitions(options.record, options.clientToolNameMap),
+		];
+		const announcedStreamTools = new Set<number>();
+
+		for (let iteration = 0; iteration <= maxIterations; iteration++) {
+			const response = await this._runChat(options.client, {
+				model: options.model,
+				temperature: this._getSessionTemperature(options.record),
+				signal: options.signal,
+				tools,
+				messages,
+			}, delta => {
+				if (timeToFirstAnswerMs === undefined && delta) {
+					timeToFirstAnswerMs = Date.now() - turnStartedAt;
+					this._setSessionActivity(options.record, options.session, undefined);
+				}
+				options.onAnswerDelta(delta);
+			}, {
+				...options.streamContext,
+				onToolCallName: chunk => {
+					if (announcedStreamTools.has(chunk.index)) {
+						return;
+					}
+					announcedStreamTools.add(chunk.index);
+					const label = getOpenAIActivityLabel(chunk.name, {}, this._getActivityVerbosity());
+					if (timeToFirstActivityMs === undefined) {
+						timeToFirstActivityMs = Date.now() - turnStartedAt;
+					}
+					if (this._canEmitActivityStep(activityStepCount)) {
+						activityStepCount++;
+						this._setSessionActivity(options.record, options.session, label.label);
+						const previewId = chunk.id ?? `stream-tool-${chunk.index}`;
+						const previewToolCall: IOpenAIToolCall = { id: previewId, name: chunk.name, arguments: '{}' };
+						this._trackActiveToolCall(options.record, previewToolCall, label);
+						this._emitPreviewToolCallStart(options.session, options.turnId, previewId, chunk.name, label);
+					}
+				},
+				onReasoningDelta: content => {
+					this._emitReasoningDelta(options.session, options.sessionStr, options.turnId, options.streamContext, content);
+					this._setSessionActivity(options.record, options.session, getAgentStatusActivityLabel('thinking'));
+				},
+			}, options.modelId);
+
+			inputTokens = response.inputTokens ?? inputTokens;
+			outputTokens = response.outputTokens ?? outputTokens;
+
+			if (response.text) {
+				assistantTranscript = assistantTranscript ? `${assistantTranscript}\n\n${response.text}` : response.text;
+				messages = [...messages, { role: 'assistant', content: response.text }];
+				await this._appendTranscript(options.record, { role: 'assistant', content: response.text, timestamp: Date.now() });
+			}
+
+			if (!response.toolCalls?.length) {
+				break;
+			}
+			if (iteration >= maxIterations) {
+				const limitMessage = `\n\nStopped after ${maxIterations} tool rounds.`;
+				assistantTranscript += limitMessage;
+				options.onAnswerDelta(limitMessage);
+				break;
+			}
+
+			toolIterations++;
+			const toolResults = await this._executeToolCalls(options.session, options.turnId, response.toolCalls, options.clientToolNameMap, options.record, () => activityStepCount, n => { activityStepCount += n; });
+			if (timeToFirstActivityMs === undefined) {
+				timeToFirstActivityMs = Date.now() - turnStartedAt;
+			}
+			const toolMessage = `Tool results:\n\n${toolResults}`;
+			messages = [...messages, { role: 'user', content: toolMessage }];
+		}
+
+		return {
+			assistantTranscript,
+			inputTokens,
+			outputTokens,
+			activityStepCount,
+			toolIterations,
+			timeToFirstActivityMs,
+			timeToFirstAnswerMs,
+		};
+	}
+
+	private _emitPreviewToolCallStart(session: URI, turnId: string, toolCallId: string, toolName: string, activity: ReturnType<typeof getOpenAIActivityLabel>): void {
+		this._onDidSessionProgress.fire({
+			kind: 'action',
+			session,
+			action: {
+				type: ActionType.SessionToolCallStart,
+				session: session.toString(),
+				turnId,
+				toolCallId,
+				toolName,
+				displayName: activity.label,
+				_meta: { toolKind: activity.kind },
+			},
+		});
+	}
+
+	private _emitReasoningDelta(
+		session: URI,
+		sessionStr: string,
+		turnId: string,
+		streamContext: { reasoningPartId: string; reasoningPartCreated: boolean },
+		content: string,
+	): void {
+		if (!content) {
+			return;
+		}
+		if (!streamContext.reasoningPartCreated) {
+			streamContext.reasoningPartCreated = true;
+			this._onDidSessionProgress.fire({
+				kind: 'action',
+				session,
+				action: {
+					type: ActionType.SessionResponsePart,
+					session: sessionStr,
+					turnId,
+					part: { kind: ResponsePartKind.Reasoning, id: streamContext.reasoningPartId, content: '' },
+				},
+			});
+		}
+		this._onDidSessionProgress.fire({
+			kind: 'action',
+			session,
+			action: {
+				type: ActionType.SessionReasoning,
+				session: sessionStr,
+				turnId,
+				partId: streamContext.reasoningPartId,
+				content,
+			},
+		});
+	}
+
+	private _emitSessionDelta(session: URI, sessionStr: string, turnId: string, partId: string, content: string): void {
+		if (!content) {
+			return;
+		}
+		this._onDidSessionProgress.fire({
+			kind: 'action',
+			session,
+			action: {
+				type: ActionType.SessionDelta,
+				session: sessionStr,
+				turnId,
+				partId,
+				content,
+			},
+		});
+	}
+
+	private _isStreamingEnabled(): boolean {
+		const env = process.env[QuantumIDEOpenAIStreamEnvVar]?.trim().toLowerCase();
+		if (env === '0' || env === 'false' || env === 'off') {
+			return false;
+		}
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.OpenAIStreamingEnabled);
+		return configured !== false;
+	}
+
+	private _getStreamCoalesceMs(): number {
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.OpenAIStreamingCoalesceMs);
+		if (typeof configured === 'number' && configured >= 0 && configured <= 500) {
+			return configured;
+		}
+		return DEFAULT_OPENAI_STREAM_COALESCE_MS;
+	}
+
+	private _isAdaptiveCoalescingEnabled(): boolean {
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing);
+		return configured !== false;
+	}
+
+	private _isStreamingSupportedForEndpoint(endpointBaseUrl: string): boolean {
+		return OpenAIAgent._streamingSupportedByEndpoint.get(endpointBaseUrl) !== false;
+	}
+
+	private _markStreamingUnsupported(endpointBaseUrl: string): void {
+		OpenAIAgent._streamingSupportedByEndpoint.set(endpointBaseUrl, false);
+		this._logService.info(`[OpenAI] Marked endpoint as non-streaming for this session: ${endpointBaseUrl}`);
+	}
+
+	private async _runChat(
+		client: OpenAIClient,
+		request: IOpenAIChatRequest,
+		onDelta: (content: string) => void,
+		streamContext?: {
+			session: URI;
+			sessionStr: string;
+			turnId: string;
+			partId: string;
+			reasoningPartId: string;
+			reasoningPartCreated: boolean;
+			onToolCallName?: (chunk: { readonly index: number; readonly id?: string; readonly name: string }) => void;
+			onReasoningDelta?: (content: string) => void;
+		},
+		modelId?: string,
+	): Promise<IOpenAIChatResponse> {
+		const endpointBaseUrl = client.endpointBaseUrl;
+		if (!this._isStreamingEnabled() || !this._isStreamingSupportedForEndpoint(endpointBaseUrl)) {
+			const response = await client.chat(request);
+			if (response.text) {
+				onDelta(response.text);
+			}
+			return response;
+		}
+
+		try {
+			return await this._runChatStream(client, request, onDelta, streamContext);
+		} catch (error) {
+			if (error instanceof OpenAIStreamNotSupportedError) {
+				this._markStreamingUnsupported(endpointBaseUrl);
+				this._logService.warn('[OpenAI] Streaming is not supported by this endpoint; falling back to buffered chat completions.');
+				const response = await client.chat(request);
+				if (response.text) {
+					onDelta(response.text);
+				}
+				return response;
+			}
+			throw error;
+		}
+	}
+
+	private async _runChatStream(
+		client: OpenAIClient,
+		request: IOpenAIChatRequest,
+		onDelta: (content: string) => void,
+		streamContext?: {
+			session: URI;
+			sessionStr: string;
+			turnId: string;
+			partId: string;
+			reasoningPartId: string;
+			reasoningPartCreated: boolean;
+			onToolCallName?: (chunk: { readonly index: number; readonly id?: string; readonly name: string }) => void;
+			onReasoningDelta?: (content: string) => void;
+		},
+	): Promise<IOpenAIChatResponse> {
+		const coalescer = new OpenAIStreamCoalescer(onDelta, {
+			baseCoalesceMs: this._getStreamCoalesceMs(),
+			maxCoalesceMs: MAX_OPENAI_STREAM_COALESCE_MS,
+			maxBurstChars: 512,
+			adaptiveCoalescing: this._isAdaptiveCoalescingEnabled(),
+		});
+		const announcedToolIndices = new Set<number>();
+		try {
+			let response: IOpenAIChatResponse | undefined;
+			for await (const chunk of client.chatStream(request)) {
+				if (chunk.kind === OpenAIChatStreamChunkKind.Text) {
+					coalescer.enqueue(chunk.content);
+				} else if (chunk.kind === OpenAIChatStreamChunkKind.Reasoning && streamContext?.onReasoningDelta) {
+					streamContext.onReasoningDelta(chunk.content);
+				} else if (chunk.kind === OpenAIChatStreamChunkKind.ToolCallName && streamContext?.onToolCallName && !announcedToolIndices.has(chunk.index)) {
+					announcedToolIndices.add(chunk.index);
+					streamContext.onToolCallName(chunk);
+				} else if (chunk.kind === OpenAIChatStreamChunkKind.Done) {
+					coalescer.flush();
+					response = {
+						text: chunk.text,
+						toolCalls: chunk.toolCalls,
+						inputTokens: chunk.inputTokens,
+						outputTokens: chunk.outputTokens,
+					};
+				}
+			}
+			coalescer.flush();
+			if (!response) {
+				throw new Error('OpenAI-compatible stream ended before a completion payload was received.');
+			}
+			const metrics = coalescer.getMetrics();
+			this._logService.info(`[OpenAI] stream metrics timeToFirstDeltaMs=${metrics.timeToFirstEmitMs ?? 'n/a'} inboundChunks=${metrics.deltaCount} emittedChars=${metrics.emittedCharCount} coalesceMs=${metrics.effectiveCoalesceMs} responseChars=${response.text.length}`);
+			return response;
+		} finally {
+			coalescer.flush();
+			coalescer.dispose();
+		}
 	}
 
 	private _createClient(): OpenAIClient {
@@ -992,26 +1418,80 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		}
 	}
 
-	private async _handleToolCalls(session: URI, turnId: string, toolCalls: readonly IOpenAIToolCall[], clientToolNameMap: ReadonlyMap<string, string>): Promise<string> {
+	private async _executeToolCalls(
+		session: URI,
+		turnId: string,
+		toolCalls: readonly IOpenAIToolCall[],
+		clientToolNameMap: ReadonlyMap<string, string>,
+		record: IOpenAISessionRecord,
+		getActivityStepCount: () => number,
+		addActivitySteps: (count: number) => void,
+	): Promise<string> {
 		const summaries: string[] = [];
 		for (const toolCall of toolCalls) {
+			const args = this._parseToolArguments(toolCall);
+			const activity = getOpenAIActivityLabel(toolCall.name, args, this._getActivityVerbosity());
+			if (this._canEmitActivityStep(getActivityStepCount())) {
+				addActivitySteps(1);
+				this._setSessionActivity(record, session, activity.label);
+			}
+			if (isOpenAIHostTool(toolCall.name)) {
+				summaries.push(await this._executeHostToolCall(session, turnId, toolCall, record, activity, getActivityStepCount));
+				continue;
+			}
 			const clientToolName = clientToolNameMap.get(toolCall.name);
 			if (clientToolName) {
-				const result = await this._handleClientToolCall(session, turnId, toolCall, clientToolName);
+				const result = await this._handleClientToolCall(session, turnId, toolCall, clientToolName, activity, getActivityStepCount, record);
+				this._emitToolCallComplete(session, turnId, toolCall, result.success !== false, activity, this._summarizeToolResult(clientToolName, result), record);
 				summaries.push(this._summarizeToolResult(clientToolName, result));
+				continue;
+			}
+			if (!this._canEmitActivityStep(getActivityStepCount())) {
+				summaries.push(`${toolCall.name}: skipped activity UI (step limit reached).`);
+				continue;
+			}
+			this._emitToolCallStart(session, turnId, toolCall, activity, record);
+			const approved = await this._requestToolApproval(session, turnId, toolCall, activity);
+			if (approved) {
+				this._emitToolCallComplete(session, turnId, toolCall, true, activity, undefined, record);
+				summaries.push(this._getToolResultText(toolCall.name, args, true));
 			} else {
-				this._emitToolCallStart(session, turnId, toolCall);
-				const approved = await this._requestToolApproval(session, turnId, toolCall);
-				if (approved) {
-					this._emitToolCallComplete(session, turnId, toolCall, true);
-					summaries.push(this._getToolResultText(toolCall.name, this._parseToolArguments(toolCall), true));
-				}
+				this._emitToolCallComplete(session, turnId, toolCall, false, activity, undefined, record);
+				summaries.push(this._getToolResultText(toolCall.name, args, false));
 			}
 		}
 		return summaries.filter(Boolean).join('\n\n');
 	}
 
-	private _emitToolCallStart(session: URI, turnId: string, toolCall: IOpenAIToolCall): void {
+	private async _executeHostToolCall(session: URI, turnId: string, toolCall: IOpenAIToolCall, record: IOpenAISessionRecord, activity: ReturnType<typeof getOpenAIActivityLabel>, getActivityStepCount: () => number): Promise<string> {
+		const args = this._parseToolArguments(toolCall);
+		if (!this._canEmitActivityStep(getActivityStepCount())) {
+			try {
+				const result = await executeOpenAIHostTool(this._fileService, record.workingDirectory, toolCall.name, args);
+				return `${toolCall.name} result:\n${result}`;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return `${toolCall.name} failed: ${message}`;
+			}
+		}
+		this._emitToolCallStart(session, turnId, toolCall, activity, record);
+		this._emitToolCallReady(session, turnId, toolCall, activity, ToolCallConfirmationReason.NotNeeded, `Running ${activity.label}`);
+		try {
+			const result = await executeOpenAIHostTool(this._fileService, record.workingDirectory, toolCall.name, args);
+			this._emitToolCallComplete(session, turnId, toolCall, true, activity, result, record);
+			return `${toolCall.name} result:\n${result}`;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this._emitToolCallComplete(session, turnId, toolCall, false, activity, message, record);
+			return `${toolCall.name} failed: ${message}`;
+		}
+	}
+
+	private _emitToolCallStart(session: URI, turnId: string, toolCall: IOpenAIToolCall, activity: ReturnType<typeof getOpenAIActivityLabel>, record?: IOpenAISessionRecord): void {
+		const sessionRecord = record ?? this._sessions.get(session.toString());
+		if (sessionRecord) {
+			this._trackActiveToolCall(sessionRecord, toolCall, activity);
+		}
 		this._onDidSessionProgress.fire({
 			kind: 'action',
 			session,
@@ -1021,18 +1501,37 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				turnId,
 				toolCallId: toolCall.id,
 				toolName: toolCall.name,
-				displayName: this._getToolDisplayName(toolCall.name),
-				_meta: { toolKind: toolCall.name === 'propose_terminal_command' ? 'terminal' : 'edit' },
+				displayName: activity.label,
+				_meta: { toolKind: activity.kind },
 			},
 		});
 	}
 
-	private async _handleClientToolCall(session: URI, turnId: string, toolCall: IOpenAIToolCall, clientToolName: string): Promise<ToolCallResult> {
-		const record = this._sessions.get(session.toString());
+	private _emitToolCallReady(session: URI, turnId: string, toolCall: IOpenAIToolCall, activity: ReturnType<typeof getOpenAIActivityLabel>, confirmed: ToolCallConfirmationReason, invocationMessage: string): void {
+		this._onDidSessionProgress.fire({
+			kind: 'action',
+			session,
+			action: {
+				type: ActionType.SessionToolCallReady,
+				session: session.toString(),
+				turnId,
+				toolCallId: toolCall.id,
+				invocationMessage,
+				toolInput: toolCall.arguments,
+				confirmed,
+			},
+		});
+	}
+
+	private async _handleClientToolCall(session: URI, turnId: string, toolCall: IOpenAIToolCall, clientToolName: string, activity: ReturnType<typeof getOpenAIActivityLabel>, getActivityStepCount: () => number, record: IOpenAISessionRecord): Promise<ToolCallResult> {
 		const clientId = record?.activeClient?.clientId;
 		if (!clientId) {
 			return { success: false, pastTenseMessage: `Failed to execute ${clientToolName}`, error: { message: 'No active client is available to run this tool.' } };
 		}
+		if (!this._canEmitActivityStep(getActivityStepCount())) {
+			return { success: false, pastTenseMessage: `Skipped ${clientToolName}`, error: { message: 'Activity step limit reached for this turn.' } };
+		}
+		this._trackActiveToolCall(record, toolCall, activity);
 		this._onDidSessionProgress.fire({
 			kind: 'action',
 			session,
@@ -1042,8 +1541,9 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				turnId,
 				toolCallId: toolCall.id,
 				toolName: clientToolName,
-				displayName: this._getToolDisplayName(clientToolName),
+				displayName: activity.label,
 				toolClientId: clientId,
+				_meta: { toolKind: activity.kind },
 			},
 		});
 		const resultPromise = new Promise<ToolCallResult>(resolve => {
@@ -1065,11 +1565,12 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		return resultPromise;
 	}
 
-	private async _requestToolApproval(session: URI, turnId: string, toolCall: IOpenAIToolCall): Promise<boolean> {
+	private async _requestToolApproval(session: URI, turnId: string, toolCall: IOpenAIToolCall, activity: ReturnType<typeof getOpenAIActivityLabel>): Promise<boolean> {
 		const args = this._parseToolArguments(toolCall);
 		const invocationMessage = this._getToolInvocationMessage(toolCall.name, args);
 		const approved = await new Promise<boolean>(resolve => {
 			this._pendingToolApprovals.set(toolCall.id, { session, turnId, toolCall, resolve });
+			this._emitToolCallReady(session, turnId, toolCall, activity, ToolCallConfirmationReason.UserAction, invocationMessage);
 			this._onDidSessionProgress.fire({
 				kind: 'pending_confirmation',
 				session,
@@ -1079,11 +1580,12 @@ export class OpenAIAgent extends Disposable implements IAgent {
 					status: ToolCallStatus.PendingConfirmation,
 					toolCallId: toolCall.id,
 					toolName: toolCall.name,
-					displayName: this._getToolDisplayName(toolCall.name),
+					displayName: activity.label,
 					invocationMessage,
-					confirmationTitle: this._getToolDisplayName(toolCall.name),
+					confirmationTitle: activity.label,
 					toolInput: toolCall.arguments,
 					editable: true,
+					_meta: { toolKind: activity.kind },
 				},
 			});
 		});
@@ -1093,16 +1595,19 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		return approved;
 	}
 
-	private _emitToolCallComplete(session: URI, turnId: string, toolCall: IOpenAIToolCall, success: boolean): void {
+	private _emitToolCallComplete(session: URI, turnId: string, toolCall: IOpenAIToolCall, success: boolean, activity: ReturnType<typeof getOpenAIActivityLabel>, resultText?: string, record?: IOpenAISessionRecord): void {
+		const sessionRecord = record ?? this._sessions.get(session.toString());
+		sessionRecord && this._untrackActiveToolCall(sessionRecord, toolCall.id);
 		const args = this._parseToolArguments(toolCall);
-		const content = this._getToolResultText(toolCall.name, args, success);
+		const content = resultText ?? this._getToolResultText(toolCall.name, args, success);
 		const result: ToolCallResult = {
 			success,
-			pastTenseMessage: success ? 'Approved proposal' : 'Denied proposal',
+			pastTenseMessage: success ? activity.label : `${activity.label} failed`,
 			content: [{
 				type: ToolResultContentType.Text,
 				text: content,
 			}],
+			...(success ? {} : { error: { message: content } }),
 		};
 		this._onDidSessionProgress.fire({
 			kind: 'action',
@@ -1154,17 +1659,6 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		}
 		const suffix = Math.random().toString(36).slice(2, 8);
 		return `${base.slice(0, Math.max(1, 64 - suffix.length - 1))}_${suffix}`;
-	}
-
-	private _getToolDisplayName(name: string): string {
-		switch (name) {
-			case 'propose_file_edit':
-				return 'Propose file edit';
-			case 'propose_terminal_command':
-				return 'Propose terminal command';
-			default:
-				return name;
-		}
 	}
 
 	private _summarizeToolResult(toolName: string, result: ToolCallResult): string {

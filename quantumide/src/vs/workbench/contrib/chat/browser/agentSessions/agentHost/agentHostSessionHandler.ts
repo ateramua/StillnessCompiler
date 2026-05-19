@@ -32,7 +32,7 @@ import { ILogService } from '../../../../../../platform/log/common/log.js';
 import { observableConfigValue } from '../../../../../../platform/observable/common/platformObservableUtils.js';
 import { IOpenerService } from '../../../../../../platform/opener/common/opener.js';
 import { IProductService } from '../../../../../../platform/product/common/productService.js';
-import { QuantumIDEOpenAIProviderId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
+import { QuantumIDEAISettingId, QuantumIDEOpenAIProviderId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
 import { IWorkspaceContextService } from '../../../../../../platform/workspace/common/workspace.js';
 import { IAgentHostTerminalService } from '../../../../terminal/browser/agentHostTerminalService.js';
 import { ITerminalChatService } from '../../../../terminal/browser/terminal.js';
@@ -56,6 +56,7 @@ import { AgentHostEditingSession } from './agentHostEditingSession.js';
 import { IAgentHostSessionWorkingDirectoryResolver } from './agentHostSessionWorkingDirectoryResolver.js';
 import { IAgentHostUntitledProvisionalSessionService } from './agentHostUntitledProvisionalSessionService.js';
 import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallToSerialized, finalizeToolInvocation, getTerminalContentUri, isSubagentTool, makeAhpTerminalToolSessionId, parseAhpTerminalToolSessionId, rawMarkdownToString, stringOrMarkdownToString, toolCallStateToInvocation, turnsToHistory, updateRunningToolSpecificData, userMessageToVariableData, type IToolCallFileEdit, type TurnModelLookup } from './stateToProgressAdapter.js';
+import { OpenAIRawToolProgressRouter } from './openaiRawToolProgress.js';
 import { IQuantumIDEWorkspaceContextService } from '../../../../../services/quantumide/common/quantumideWorkspaceContext.js';
 
 // =============================================================================
@@ -1146,9 +1147,14 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		return new Promise<Turn | undefined>(resolve => {
 			const store = new DisposableStore();
 			let stateProgressSeen = false;
+			const useRawStreamingProgress = this._config.provider === QuantumIDEOpenAIProviderId;
+			const showActivitySteps = this._isAgentActivityStepsEnabled();
+			const rawToolRouter = useRawStreamingProgress && showActivitySteps
+				? store.add(new OpenAIRawToolProgressRouter(request.sessionResource, this._config.connectionAuthority, this._getMaxActivityStepsPerTurn()))
+				: undefined;
 			let rawCompletedTurn: Turn | undefined;
 			const rawProgress = (parts: IChatProgress[]) => {
-				if (!stateProgressSeen && parts.length > 0) {
+				if ((useRawStreamingProgress || !stateProgressSeen) && parts.length > 0) {
 					progress(parts);
 				}
 			};
@@ -1162,6 +1168,14 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				}
 				if (action.type === ActionType.SessionDelta) {
 					rawProgress([{ kind: 'markdownContent', content: rawMarkdownToString(action.content, this._config.connectionAuthority, { supportHtml: true }) }]);
+				} else if (rawToolRouter && (
+					action.type === ActionType.SessionToolCallStart
+					|| action.type === ActionType.SessionToolCallReady
+					|| action.type === ActionType.SessionToolCallComplete
+				)) {
+					rawProgress(rawToolRouter.handleAction(action));
+				} else if (useRawStreamingProgress && action.type === ActionType.SessionReasoning) {
+					rawProgress([{ kind: 'thinking', value: action.content }]);
 				} else if (action.type === ActionType.SessionError) {
 					rawCompletedTurn = { id: turnId, userMessage: { text: request.message }, responseParts: [], usage: undefined, state: TurnState.Error, error: action.error };
 					rawProgress([{ kind: 'markdownContent', content: new MarkdownString(`\n\nError: (${action.error.errorType}) ${action.error.message}`) }]);
@@ -2719,6 +2733,21 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 
 	private _convertVariablesToAttachments(request: IChatAgentRequest): MessageAttachment[] {
 		return this._variableEntriesToAttachments(request.variables.variables, request.sessionResource);
+	}
+
+	private _isAgentActivityStepsEnabled(): boolean {
+		if (this._config.provider !== QuantumIDEOpenAIProviderId) {
+			return true;
+		}
+		if (process.env['QUANTUMIDE_AGENT_ACTIVITY'] === '0') {
+			return false;
+		}
+		return this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentShowActivitySteps) !== false;
+	}
+
+	private _getMaxActivityStepsPerTurn(): number {
+		const configured = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn);
+		return typeof configured === 'number' && configured >= 1 && configured <= 200 ? configured : 50;
 	}
 
 	private async _appendQuantumIDEWorkspaceContextAttachment(attachments: MessageAttachment[]): Promise<void> {

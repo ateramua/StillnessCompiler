@@ -110,6 +110,14 @@ const QUANTUMIDE_SETTINGS_QUERIES: Record<QuantumIDESettingsCategory, string> = 
 		QuantumIDEAISettingId.OpenAIGPT41Enabled,
 		QuantumIDEAISettingId.OpenAIGPT41MiniEnabled,
 		QuantumIDEAISettingId.OpenAIGPT4oEnabled,
+		QuantumIDEAISettingId.OpenAIStreamingEnabled,
+		QuantumIDEAISettingId.OpenAIStreamingCoalesceMs,
+		QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing,
+		QuantumIDEAISettingId.AgentShowActivitySteps,
+		QuantumIDEAISettingId.AgentActivityVerbosity,
+		QuantumIDEAISettingId.AgentMaxToolIterations,
+		QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn,
+		QuantumIDEAISettingId.AgentActivityDebugOutput,
 		QuantumIDEAISettingId.ModelRouterRoutes,
 	].map(id => `@id:${id}`).join(' '),
 	advanced: [
@@ -167,19 +175,19 @@ function registerQuantumIDEAIConfiguration(): void {
 					localize('quantumide.ai.openai.apiKeyStorage.secretStorage', 'Store the API key in the application secret store and forward it securely to the Agent Host for active OpenAI sessions.'),
 				],
 				scope: ConfigurationScope.APPLICATION,
-				markdownDescription: localize('quantumide.ai.openai.apiKeyStorage', 'Controls where the ChatGPT/OpenAI API key is read from. API keys are intentionally not stored in plain JSON settings. Use **QuantumIDE: Store OpenAI API Key**, **QuantumIDE: Test OpenAI Connection**, and **QuantumIDE: Refresh OpenAI Models** for secure key setup and validation.'),
+				markdownDescription: localize('quantumide.ai.openai.apiKeyStorage', 'Controls where the ChatGPT/OpenAI API key is read from. API keys are intentionally not stored in plain JSON settings. Use [Store API Key](command:quantumide.ai.openai.storeApiKey), [Test Connection](command:quantumide.ai.openai.testConnection), and [Refresh Models](command:quantumide.ai.openai.refreshModels) from this Models settings flow for secure setup and validation.'),
 			},
 			[QuantumIDEAISettingId.OpenAIModel]: {
 				type: 'string',
 				default: 'gpt-4.1',
 				scope: ConfigurationScope.APPLICATION,
-				markdownDescription: localize('quantumide.ai.openai.model', 'Default ChatGPT/OpenAI-compatible model used by QuantumIDE AI. Run **QuantumIDE: Refresh OpenAI Models** after storing a key to update the model picker with models returned by the provider.'),
+				markdownDescription: localize('quantumide.ai.openai.model', 'Default ChatGPT/OpenAI-compatible model used by QuantumIDE AI. Configure access with [Store API Key](command:quantumide.ai.openai.storeApiKey), then run [Refresh Models](command:quantumide.ai.openai.refreshModels) to update the model picker with models returned by the provider.'),
 			},
 			[QuantumIDEAISettingId.OpenAIBaseUrl]: {
 				type: 'string',
 				default: 'https://api.openai.com/v1',
 				scope: ConfigurationScope.APPLICATION,
-				markdownDescription: localize('quantumide.ai.openai.baseUrl', 'OpenAI-compatible API base URL. Use this for OpenAI-compatible gateways or local servers. API keys must be stored through QuantumIDE commands or environment variables, not this setting.'),
+				markdownDescription: localize('quantumide.ai.openai.baseUrl', 'OpenAI-compatible API base URL. Use this for OpenAI-compatible gateways or local servers. API keys are stored securely with [Store API Key](command:quantumide.ai.openai.storeApiKey), not in settings.json.'),
 			},
 			[QuantumIDEAISettingId.ModelRouterRoutes]: {
 				type: 'array',
@@ -222,7 +230,7 @@ function registerQuantumIDEAIConfiguration(): void {
 					},
 					additionalProperties: false,
 				},
-				markdownDescription: localize('quantumide.ai.modelRouter.routes', 'Configures the enabled model routes shown in the chat model picker. Each enabled OpenAI-compatible route maps the selected model to its provider-native model, endpoint override, and tier. API keys are still read from Secret Storage or environment variables, never from JSON settings.'),
+				markdownDescription: localize('quantumide.ai.modelRouter.routes', 'Configures the enabled model routes shown in the chat model picker. Each enabled OpenAI-compatible route maps the selected model to its provider-native model, endpoint override, and tier. API keys are stored securely per provider flow with [Store API Key](command:quantumide.ai.openai.storeApiKey), never in JSON settings.'),
 			},
 			[QuantumIDEAISettingId.OpenAIGPT41Enabled]: {
 				type: 'boolean',
@@ -241,6 +249,66 @@ function registerQuantumIDEAIConfiguration(): void {
 				default: true,
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: localize('quantumide.ai.openai.models.gpt4o.enabled', 'Shows GPT-4o as an enabled vision-capable OpenAI-compatible route in the chat model picker.'),
+			},
+			[QuantumIDEAISettingId.OpenAIStreamingEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.openai.streaming.enabled', 'Streams OpenAI-compatible chat responses incrementally instead of waiting for the full completion. Set the QUANTUMIDE_OPENAI_STREAM environment variable to `0` to disable streaming.'),
+			},
+			[QuantumIDEAISettingId.OpenAIStreamingCoalesceMs]: {
+				type: 'number',
+				default: 24,
+				minimum: 0,
+				maximum: 500,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.openai.streaming.coalesceMs', 'Controls how long the OpenAI agent batches streamed text before updating the chat UI. Lower values feel more responsive; higher values reduce UI churn.'),
+			},
+			[QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.openai.streaming.adaptiveCoalescing', 'Adjusts OpenAI stream batching based on observed token throughput so bursty providers stay smooth without adding unnecessary delay to fast models.'),
+			},
+			[QuantumIDEAISettingId.AgentShowActivitySteps]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.showActivitySteps', 'Shows live agent activity steps (search, read, tools) in chat while the OpenAI-compatible agent works. Set the QUANTUMIDE_AGENT_ACTIVITY environment variable to `0` to disable.'),
+			},
+			[QuantumIDEAISettingId.AgentActivityVerbosity]: {
+				type: 'string',
+				default: 'normal',
+				enum: ['minimal', 'normal', 'verbose'],
+				enumDescriptions: [
+					localize('quantumide.ai.agent.activityVerbosity.minimal', 'Short activity labels with minimal detail.'),
+					localize('quantumide.ai.agent.activityVerbosity.normal', 'Standard activity labels with path and query detail when available.'),
+					localize('quantumide.ai.agent.activityVerbosity.verbose', 'Verbose activity labels including tool argument detail.'),
+				],
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.activityVerbosity', 'Controls how much detail appears in live agent activity step labels. Set QUANTUMIDE_AGENT_ACTIVITY to `minimal` or `verbose` to override.'),
+			},
+			[QuantumIDEAISettingId.AgentMaxToolIterations]: {
+				type: 'number',
+				default: 8,
+				minimum: 1,
+				maximum: 32,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.maxToolIterations', 'Maximum number of tool-call rounds the OpenAI-compatible agent may run per user message before stopping.'),
+			},
+			[QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn]: {
+				type: 'number',
+				default: 50,
+				minimum: 1,
+				maximum: 200,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.maxActivityStepsPerTurn', 'Maximum number of live activity steps shown in chat for a single agent turn.'),
+			},
+			[QuantumIDEAISettingId.AgentActivityDebugOutput]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.activityDebugOutput', 'Writes agent activity steps to the **QuantumIDE Agent** output channel for debugging and support.'),
 			},
 			[QuantumIDEAISettingId.AgentAutoApplyEdits]: {
 				type: 'boolean',
@@ -314,6 +382,69 @@ async function openQuantumIDEOpenAIChat(accessor: ServicesAccessor): Promise<unk
 async function openQuantumIDESettings(accessor: ServicesAccessor, category: QuantumIDESettingsCategory = 'general'): Promise<void> {
 	const query = QUANTUMIDE_SETTINGS_QUERIES[category] ?? QUANTUMIDE_SETTINGS_QUERIES.general;
 	await accessor.get(IPreferencesService).openSettings({ jsonEditor: false, query });
+}
+
+async function openQuantumIDEModelsSettings(accessor: ServicesAccessor): Promise<void> {
+	const preferencesService = accessor.get(IPreferencesService);
+	const config = accessor.get(IConfigurationService);
+	const secretStorageService = accessor.get(ISecretStorageService);
+	const agentHostService = accessor.get(IAgentHostService);
+	const quickInputService = accessor.get(IQuickInputService);
+	const commandService = accessor.get(ICommandService);
+
+	await preferencesService.openSettings({ jsonEditor: false, query: QUANTUMIDE_SETTINGS_QUERIES.models });
+	const secret = await secretStorageService.get(QuantumIDEOpenAIApiKeySecretStorageKey);
+	const provider = config.getValue<string>(QuantumIDEAISettingId.DefaultProvider) ?? QuantumIDEAIProvider.Auto;
+	const model = config.getValue<string>(QuantumIDEAISettingId.OpenAIModel) ?? 'gpt-4.1';
+	const baseUrl = config.getValue<string>(QuantumIDEAISettingId.OpenAIBaseUrl) ?? 'https://api.openai.com/v1';
+	const storageMode = config.getValue<string>(QuantumIDEAISettingId.OpenAIApiKeyStorage) ?? 'environment';
+	const rootState = agentHostService.rootState.value;
+	const openAIResource = rootState instanceof Error
+		? undefined
+		: rootState?.agents.find(agent => agent.provider === 'openai')?.protectedResources?.find(resource => resource.resource === QuantumIDEOpenAIProtectedResourceId);
+	const hasEnvironmentKey = openAIResource?.required === false;
+	const keyStatus = hasEnvironmentKey ? localize('quantumide.ai.modelsSettings.key.environment', 'environment key detected') : secret ? localize('quantumide.ai.modelsSettings.key.secret', 'stored in Secret Storage') : localize('quantumide.ai.modelsSettings.key.missing', 'not configured');
+
+	const selected = await quickInputService.pick([
+		{
+			id: 'store-key',
+			label: localize('quantumide.ai.modelsSettings.storeKey', 'Store API Key for Selected OpenAI Model'),
+			detail: localize('quantumide.ai.modelsSettings.storeKey.detail', 'Securely stores the API key used by {0}. The key is never written to settings.json.', model),
+		},
+		{
+			id: 'test-connection',
+			label: localize('quantumide.ai.modelsSettings.testConnection', 'Test Selected Model API Access'),
+			detail: localize('quantumide.ai.modelsSettings.testConnection.detail', 'Validates the stored key and endpoint before using chat.'),
+		},
+		{
+			id: 'refresh-models',
+			label: localize('quantumide.ai.modelsSettings.refreshModels', 'Refresh Available Models'),
+			detail: localize('quantumide.ai.modelsSettings.refreshModels.detail', 'Fetches the model catalog from the configured OpenAI-compatible endpoint.'),
+		},
+		{
+			id: 'clear-key',
+			label: localize('quantumide.ai.modelsSettings.clearKey', 'Clear Stored API Key'),
+			detail: localize('quantumide.ai.modelsSettings.clearKey.detail', 'Removes the OpenAI API key from QuantumIDE Secret Storage.'),
+		},
+		{
+			id: 'settings-only',
+			label: localize('quantumide.ai.modelsSettings.settingsOnly', 'Continue Editing Model Settings'),
+			detail: localize('quantumide.ai.modelsSettings.settingsOnly.detail', 'Stay on the Models settings page to change model, endpoint, toggles, or routes.'),
+		},
+	], {
+		title: localize('quantumide.ai.modelsSettings.title', 'QuantumIDE Models and API Access'),
+		placeHolder: localize('quantumide.ai.modelsSettings.placeholder', 'Provider: {0} | Model: {1} | API key: {2} | Base URL: {3} | Storage: {4}', provider, model, keyStatus, baseUrl, storageMode),
+	});
+
+	if (selected?.id === 'store-key') {
+		await commandService.executeCommand(QuantumIDEAICommandId.StoreOpenAIApiKey);
+	} else if (selected?.id === 'test-connection') {
+		await commandService.executeCommand(QuantumIDEAICommandId.TestOpenAIConnection);
+	} else if (selected?.id === 'refresh-models') {
+		await commandService.executeCommand(QuantumIDEAICommandId.RefreshOpenAIModels);
+	} else if (selected?.id === 'clear-key') {
+		await commandService.executeCommand(QuantumIDEAICommandId.ClearOpenAIApiKey);
+	}
 }
 
 function isQuantumIDEProduct(): boolean {
@@ -447,10 +578,13 @@ function openQuickChatWithPrompt(accessor: ServicesAccessor, prompt: string): vo
 }
 
 function recordQuantumIDEAIAuditEvent(accessor: ServicesAccessor, type: string, summary: string, metadata: Record<string, unknown> = {}): void {
-	if (accessor.get(IConfigurationService).getValue<boolean>(QuantumIDEAISettingId.AgentAuditEnabled) === false) {
+	recordQuantumIDEAIAuditEventWithServices(accessor.get(IConfigurationService), accessor.get(IStorageService), type, summary, metadata);
+}
+
+function recordQuantumIDEAIAuditEventWithServices(configurationService: IConfigurationService, storage: IStorageService, type: string, summary: string, metadata: Record<string, unknown> = {}): void {
+	if (configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentAuditEnabled) === false) {
 		return;
 	}
-	const storage = accessor.get(IStorageService);
 	let existing: unknown[] = [];
 	const raw = storage.get(QUANTUMIDE_AI_AUDIT_STORAGE_KEY, StorageScope.APPLICATION);
 	if (raw) {
@@ -516,7 +650,14 @@ async function authenticateStoredOpenAIApiKey(accessor: ServicesAccessor, succes
 }
 
 async function storeOpenAIApiKey(accessor: ServicesAccessor): Promise<void> {
-	const apiKey = await accessor.get(IQuickInputService).input({
+	const quickInputService = accessor.get(IQuickInputService);
+	const secretStorageService = accessor.get(ISecretStorageService);
+	const configurationService = accessor.get(IConfigurationService);
+	const agentHostService = accessor.get(IAgentHostService);
+	const notificationService = accessor.get(INotificationService);
+	const storageService = accessor.get(IStorageService);
+
+	const apiKey = await quickInputService.input({
 		title: localize('quantumide.ai.openai.storeApiKey.title', 'Store QuantumIDE OpenAI API Key'),
 		placeHolder: localize('quantumide.ai.openai.storeApiKey.placeholder', 'Enter an OpenAI-compatible API key'),
 		password: true,
@@ -527,54 +668,68 @@ async function storeOpenAIApiKey(accessor: ServicesAccessor): Promise<void> {
 	if (!apiKey) {
 		return;
 	}
-	await accessor.get(ISecretStorageService).set(QuantumIDEOpenAIApiKeySecretStorageKey, apiKey.trim());
-	await accessor.get(IConfigurationService).updateValue(QuantumIDEAISettingId.OpenAIApiKeyStorage, 'secretStorage');
+	await secretStorageService.set(QuantumIDEOpenAIApiKeySecretStorageKey, apiKey.trim());
+	await configurationService.updateValue(QuantumIDEAISettingId.OpenAIApiKeyStorage, 'secretStorage');
 	let forwarded = false;
 	try {
-		const result = await accessor.get(IAgentHostService).authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: apiKey.trim() });
+		const result = await agentHostService.authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: apiKey.trim() });
 		forwarded = result.authenticated;
 	} catch {
 		forwarded = false;
 	}
-	recordQuantumIDEAIAuditEvent(accessor, 'openai-api-key-stored', 'Stored OpenAI API key in application secret storage.');
-	accessor.get(INotificationService).info(forwarded
+	recordQuantumIDEAIAuditEventWithServices(configurationService, storageService, 'openai-api-key-stored', 'Stored OpenAI API key in application secret storage.');
+	notificationService.info(forwarded
 		? localize('quantumide.ai.openai.storeApiKey.savedForwarded', 'OpenAI API key saved in QuantumIDE secret storage and forwarded to the Agent Host.')
 		: localize('quantumide.ai.openai.storeApiKey.savedNotForwarded', 'OpenAI API key saved in QuantumIDE secret storage. Restart or enable Agent Host if it is not available yet.'));
 }
 
 async function testOpenAIConnection(accessor: ServicesAccessor): Promise<void> {
+	const configurationService = accessor.get(IConfigurationService);
+	const storageService = accessor.get(IStorageService);
 	const authenticated = await authenticateStoredOpenAIApiKey(accessor, localize('quantumide.ai.openai.testConnection.success', 'OpenAI connection succeeded. QuantumIDE refreshed the available model catalog.'));
 	if (authenticated) {
-		recordQuantumIDEAIAuditEvent(accessor, 'openai-connection-tested', 'Tested OpenAI connection and refreshed model catalog.');
+		recordQuantumIDEAIAuditEventWithServices(configurationService, storageService, 'openai-connection-tested', 'Tested OpenAI connection and refreshed model catalog.');
 	}
 }
 
 async function refreshOpenAIModels(accessor: ServicesAccessor): Promise<void> {
+	const configurationService = accessor.get(IConfigurationService);
+	const storageService = accessor.get(IStorageService);
 	const authenticated = await authenticateStoredOpenAIApiKey(accessor, localize('quantumide.ai.openai.refreshModels.success', 'OpenAI model catalog refreshed.'));
 	if (authenticated) {
-		recordQuantumIDEAIAuditEvent(accessor, 'openai-models-refreshed', 'Refreshed OpenAI model catalog.');
+		recordQuantumIDEAIAuditEventWithServices(configurationService, storageService, 'openai-models-refreshed', 'Refreshed OpenAI model catalog.');
 	}
 }
 
 async function clearOpenAIApiKey(accessor: ServicesAccessor): Promise<void> {
-	await accessor.get(ISecretStorageService).delete(QuantumIDEOpenAIApiKeySecretStorageKey);
+	const secretStorageService = accessor.get(ISecretStorageService);
+	const agentHostService = accessor.get(IAgentHostService);
+	const configurationService = accessor.get(IConfigurationService);
+	const storageService = accessor.get(IStorageService);
+	const notificationService = accessor.get(INotificationService);
+	await secretStorageService.delete(QuantumIDEOpenAIApiKeySecretStorageKey);
 	try {
-		await accessor.get(IAgentHostService).authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: '' });
+		await agentHostService.authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: '' });
 	} catch {
 		// Agent Host may not be running; clearing secret storage is still complete.
 	}
-	recordQuantumIDEAIAuditEvent(accessor, 'openai-api-key-cleared', 'Cleared OpenAI API key from application secret storage.');
-	accessor.get(INotificationService).info(localize('quantumide.ai.openai.clearApiKey.cleared', 'OpenAI API key removed from QuantumIDE secret storage.'));
+	recordQuantumIDEAIAuditEventWithServices(configurationService, storageService, 'openai-api-key-cleared', 'Cleared OpenAI API key from application secret storage.');
+	notificationService.info(localize('quantumide.ai.openai.clearApiKey.cleared', 'OpenAI API key removed from QuantumIDE secret storage.'));
 }
 
 async function showProviderStatus(accessor: ServicesAccessor): Promise<void> {
 	const config = accessor.get(IConfigurationService);
-	const secret = await accessor.get(ISecretStorageService).get(QuantumIDEOpenAIApiKeySecretStorageKey);
+	const secretStorageService = accessor.get(ISecretStorageService);
+	const agentHostService = accessor.get(IAgentHostService);
+	const quickInputService = accessor.get(IQuickInputService);
+	const commandService = accessor.get(ICommandService);
+	const storageService = accessor.get(IStorageService);
+	const secret = await secretStorageService.get(QuantumIDEOpenAIApiKeySecretStorageKey);
 	const defaultProvider = config.getValue<string>(QuantumIDEAISettingId.DefaultProvider) ?? QuantumIDEAIProvider.Auto;
 	const storageMode = config.getValue<string>(QuantumIDEAISettingId.OpenAIApiKeyStorage) ?? 'environment';
 	const model = config.getValue<string>(QuantumIDEAISettingId.OpenAIModel) ?? 'gpt-4.1';
 	const baseUrl = config.getValue<string>(QuantumIDEAISettingId.OpenAIBaseUrl) ?? 'https://api.openai.com/v1';
-	const rootState = accessor.get(IAgentHostService).rootState.value;
+	const rootState = agentHostService.rootState.value;
 	const openAIResource = rootState instanceof Error
 		? undefined
 		: rootState?.agents.find(agent => agent.provider === 'openai')?.protectedResources?.find(resource => resource.resource === QuantumIDEOpenAIProtectedResourceId);
@@ -583,12 +738,12 @@ async function showProviderStatus(accessor: ServicesAccessor): Promise<void> {
 	let agentHostAuthenticated = hasEnvironmentKey;
 	if (secret) {
 		try {
-			agentHostAuthenticated = (await accessor.get(IAgentHostService).authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: secret })).authenticated;
+			agentHostAuthenticated = (await agentHostService.authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: secret })).authenticated;
 		} catch {
 			agentHostAuthenticated = false;
 		}
 	}
-	const selected = await accessor.get(IQuickInputService).pick([
+	const selected = await quickInputService.pick([
 		{
 			id: 'settings',
 			label: localize('quantumide.ai.providerStatus.openSettings', 'Open AI Settings'),
@@ -613,15 +768,15 @@ async function showProviderStatus(accessor: ServicesAccessor): Promise<void> {
 		title: localize('quantumide.ai.providerStatus.title', 'QuantumIDE AI Provider Status'),
 		placeHolder: localize('quantumide.ai.providerStatus.placeholder', 'Base URL: {0} | Key storage setting: {1}', baseUrl, storageMode),
 	});
-	recordQuantumIDEAIAuditEvent(accessor, 'provider-status-shown', 'Viewed QuantumIDE AI provider status.', { defaultProvider, model, storageMode, hasEnvironmentKey, hasSecretKey });
+	recordQuantumIDEAIAuditEventWithServices(config, storageService, 'provider-status-shown', 'Viewed QuantumIDE AI provider status.', { defaultProvider, model, storageMode, hasEnvironmentKey, hasSecretKey });
 	if (selected?.id === 'settings') {
-		await openQuantumIDESettings(accessor, 'models');
+		await commandService.executeCommand(QuantumIDEAICommandId.OpenSettingsModels);
 	} else if (selected?.id === 'store-key') {
-		await storeOpenAIApiKey(accessor);
+		await commandService.executeCommand(QuantumIDEAICommandId.StoreOpenAIApiKey);
 	} else if (selected?.id === 'test-connection') {
-		await testOpenAIConnection(accessor);
+		await commandService.executeCommand(QuantumIDEAICommandId.TestOpenAIConnection);
 	} else if (selected?.id === 'refresh-models') {
-		await refreshOpenAIModels(accessor);
+		await commandService.executeCommand(QuantumIDEAICommandId.RefreshOpenAIModels);
 	}
 }
 
@@ -962,7 +1117,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'models');
+			return openQuantumIDEModelsSettings(accessor);
 		}
 	});
 

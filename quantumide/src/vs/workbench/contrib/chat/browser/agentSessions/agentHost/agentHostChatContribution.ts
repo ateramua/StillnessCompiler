@@ -14,12 +14,15 @@ import { ActionType } from '../../../../../../platform/agentHost/common/state/se
 import { type ProtectedResourceMetadata } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { type AgentInfo, type CustomizationRef, type RootState } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
+import { IOutputService } from '../../../../../services/output/common/output.js';
 import { IDefaultAccountService } from '../../../../../../platform/defaultAccount/common/defaultAccount.js';
 import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
+import { INotificationService } from '../../../../../../platform/notification/common/notification.js';
 import product from '../../../../../../platform/product/common/product.js';
-import { QuantumIDEAISettingId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
+import { IQuickInputService } from '../../../../../../platform/quickinput/common/quickInput.js';
+import { QuantumIDEAISettingId, QuantumIDEOpenAIApiKeySecretStorageKey, QuantumIDEOpenAIProtectedResourceId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
 import { defaultQuantumIDEModelRoutes, QuantumIDEModelRouterConfigKey, sanitizeQuantumIDEModelRoutes } from '../../../../../../platform/quantumide/common/quantumideModelRouter.js';
 import { ISecretStorageService } from '../../../../../../platform/secrets/common/secrets.js';
 import { IStorageService } from '../../../../../../platform/storage/common/storage.js';
@@ -40,6 +43,7 @@ import { AgentHostLanguageModelProvider } from './agentHostLanguageModelProvider
 import { AgentHostSessionHandler } from './agentHostSessionHandler.js';
 import { AgentHostSessionListController } from './agentHostSessionListController.js';
 import { LoggingAgentConnection } from './loggingAgentConnection.js';
+import { QuantumIDEAgentActivityLogger } from './quantumideAgentActivityLog.js';
 import { SyncedCustomizationBundler } from './syncedCustomizationBundler.js';
 
 export { AgentHostSessionHandler } from './agentHostSessionHandler.js';
@@ -87,6 +91,8 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		@IPromptsService private readonly _promptsService: IPromptsService,
 		@IFileService private readonly _fileService: IFileService,
 		@ISecretStorageService private readonly _secretStorageService: ISecretStorageService,
+		@IQuickInputService private readonly _quickInputService: IQuickInputService,
+		@INotificationService private readonly _notificationService: INotificationService,
 		@IWorkbenchEnvironmentService environmentService: IWorkbenchEnvironmentService,
 	) {
 		super();
@@ -106,15 +112,26 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 
 		this._register(_agentHostFileSystemService.registerAuthority('local', this._agentHostService));
 		if (isQuantumIDEProduct) {
-			this._syncQuantumIDEModelRouterConfig();
+			this._register(this._instantiationService.invokeFunction(accessor => new QuantumIDEAgentActivityLogger(
+				this._loggedConnection!,
+				accessor.get(IOutputService),
+				accessor.get(IConfigurationService),
+			)));
+			this._syncQuantumIDEOpenAIAgentConfig();
 			this._register(this._configurationService.onDidChangeConfiguration(event => {
 				if (
 					event.affectsConfiguration(QuantumIDEAISettingId.ModelRouterRoutes)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT41Enabled)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT41MiniEnabled)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIGPT4oEnabled)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIStreamingEnabled)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIStreamingCoalesceMs)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentMaxToolIterations)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentActivityVerbosity)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn)
 				) {
-					this._syncQuantumIDEModelRouterConfig();
+					this._syncQuantumIDEOpenAIAgentConfig();
 				}
 			}));
 		}
@@ -292,15 +309,25 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		return (rootState && !(rootState instanceof Error)) ? rootState.agents : [];
 	}
 
-	private _syncQuantumIDEModelRouterConfig(): void {
+	private _syncQuantumIDEOpenAIAgentConfig(): void {
 		const routes = this._withBuiltInRouteToggles(sanitizeQuantumIDEModelRoutes(
 			this._configurationService.getValue<unknown>(QuantumIDEAISettingId.ModelRouterRoutes),
 			defaultQuantumIDEModelRoutes,
 		));
+		const coalesceMs = this._configurationService.getValue<number>(QuantumIDEAISettingId.OpenAIStreamingCoalesceMs);
+		const maxToolIterations = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxToolIterations);
+		const maxActivitySteps = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn);
+		const activityVerbosity = this._configurationService.getValue<string>(QuantumIDEAISettingId.AgentActivityVerbosity);
 		this._loggedConnection?.dispatch({
 			type: ActionType.RootConfigChanged,
 			config: {
 				[QuantumIDEModelRouterConfigKey]: routes,
+				[QuantumIDEAISettingId.OpenAIStreamingEnabled]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIStreamingEnabled) !== false,
+				[QuantumIDEAISettingId.OpenAIStreamingCoalesceMs]: typeof coalesceMs === 'number' ? coalesceMs : 24,
+				[QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing) !== false,
+				[QuantumIDEAISettingId.AgentMaxToolIterations]: typeof maxToolIterations === 'number' ? maxToolIterations : 8,
+				[QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn]: typeof maxActivitySteps === 'number' ? maxActivitySteps : 50,
+				[QuantumIDEAISettingId.AgentActivityVerbosity]: activityVerbosity === 'minimal' || activityVerbosity === 'verbose' ? activityVerbosity : 'normal',
 			},
 		});
 	}
@@ -345,6 +372,9 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 	 */
 	private async _resolveAuthenticationInteractively(protectedResources: ProtectedResourceMetadata[]): Promise<boolean> {
 		try {
+			if (isQuantumIDEProduct && protectedResources.some(resource => resource.resource === QuantumIDEOpenAIProtectedResourceId)) {
+				return await this._resolveQuantumIDEOpenAIAuthentication();
+			}
 			return await resolveAuthenticationInteractively(protectedResources, {
 				authTokenCache: this._authTokenCache,
 				authenticationService: this._authenticationService,
@@ -358,5 +388,52 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 			this._loggedConnection!.logError('resolveAuthenticationInteractively', err);
 		}
 		return false;
+	}
+
+	private async _resolveQuantumIDEOpenAIAuthentication(): Promise<boolean> {
+		const existingSecret = await this._secretStorageService.get(QuantumIDEOpenAIApiKeySecretStorageKey);
+		if (existingSecret) {
+			const authenticated = await this._loggedConnection!.authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token: existingSecret });
+			this._authTokenCache.updateAndIsChanged(QuantumIDEOpenAIProtectedResourceId, existingSecret);
+			return !!authenticated.authenticated;
+		}
+
+		const apiKey = await this._quickInputService.input({
+			title: localize('quantumide.openai.auth.title', 'Connect QuantumIDE to OpenAI'),
+			placeHolder: localize('quantumide.openai.auth.placeholder', 'Enter your OpenAI-compatible API key'),
+			password: true,
+			ignoreFocusLost: true,
+			prompt: localize('quantumide.openai.auth.prompt', 'QuantumIDE needs an OpenAI-compatible API key before it can start this chat session. The key is stored in Secret Storage, not settings.json.'),
+			validateInput: async value => {
+				const trimmed = value.trim();
+				if (!trimmed) {
+					return localize('quantumide.openai.auth.required', 'Enter an API key or press Escape to cancel.');
+				}
+				if (/\s/.test(trimmed)) {
+					return localize('quantumide.openai.auth.noWhitespace', 'API keys cannot contain spaces or newlines.');
+				}
+				if (trimmed.length < 20) {
+					return localize('quantumide.openai.auth.tooShort', 'This key looks too short for an OpenAI-compatible API key.');
+				}
+				return undefined;
+			},
+		});
+		if (!apiKey) {
+			return false;
+		}
+
+		const token = apiKey.trim();
+		const result = await this._loggedConnection!.authenticate({ resource: QuantumIDEOpenAIProtectedResourceId, token });
+		if (!result.authenticated) {
+			this._authTokenCache.clear(QuantumIDEOpenAIProtectedResourceId);
+			this._notificationService.error(localize('quantumide.openai.auth.rejected', 'OpenAI authentication failed. Check the API key, base URL, quota, and model access.'));
+			return false;
+		}
+
+		await this._secretStorageService.set(QuantumIDEOpenAIApiKeySecretStorageKey, token);
+		await this._configurationService.updateValue(QuantumIDEAISettingId.OpenAIApiKeyStorage, 'secretStorage');
+		this._authTokenCache.updateAndIsChanged(QuantumIDEOpenAIProtectedResourceId, token);
+		this._notificationService.info(localize('quantumide.openai.auth.saved', 'OpenAI API key saved. Starting QuantumIDE chat session...'));
+		return true;
 	}
 }

@@ -21,6 +21,7 @@ import { type IToolConfirmationMessages, type IToolData, ToolDataSource, ToolInv
 import { basename, isEqual } from '../../../../../../base/common/resources.js';
 import { hasKey } from '../../../../../../base/common/types.js';
 import { localize } from '../../../../../../nls.js';
+import { resolveAgentActivityDisplayName } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
 import type { IRange } from '../../../../../../editor/common/core/range.js';
 
 /**
@@ -341,10 +342,11 @@ function getTerminalLanguage(tc: ToolCallState) {
  * tool invocation suitable for history replay.
  */
 export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined): IChatToolInvocationSerialized {
+	const displayName = resolveAgentActivityDisplayName(tc.toolName, tc.displayName, 'toolInput' in tc ? tc.toolInput : undefined);
 	const terminalContentUri = tc.status === ToolCallStatus.Completed ? getTerminalContentUri(tc.content) : undefined;
 	const isTerminal = !!terminalContentUri;
 	const isSuccess = tc.status === ToolCallStatus.Completed && tc.success;
-	const invocationMsg = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", tc.displayName);
+	const invocationMsg = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", displayName);
 
 	// Check for subagent content
 	const subagentContent = tc.status === ToolCallStatus.Completed ? getToolSubagentContent(tc) : undefined;
@@ -636,10 +638,11 @@ export function stringOrMarkdownToString(value: StringOrMarkdown | undefined, co
  *   URI wrapping (e.g. in tests that don't exercise the confirmation UI).
  */
 export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined): ChatToolInvocation {
+	const displayName = resolveAgentActivityDisplayName(tc.toolName, tc.displayName, 'toolInput' in tc ? tc.toolInput : undefined);
 	const toolData: IToolData = {
 		id: tc.toolName,
 		source: ToolDataSource.Internal,
-		displayName: tc.displayName,
+		displayName,
 		modelDescription: tc.toolName,
 	};
 
@@ -650,7 +653,7 @@ export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationI
 		// mapper auto-emits `tool_ready` with `confirmed: NotNeeded` paired
 		// with `tool_start`. So no special-case for subagents is needed here.)
 		const confirmationMessages: IToolConfirmationMessages = {
-			title: stringOrMarkdownToString(tc.confirmationTitle, connectionAuthority) ?? tc.displayName,
+			title: stringOrMarkdownToString(tc.confirmationTitle, connectionAuthority) ?? displayName,
 			message: stringOrMarkdownToString(tc.invocationMessage, connectionAuthority),
 		};
 		if (tc.options) {
@@ -709,7 +712,7 @@ export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationI
 	}
 
 	const invocation = new ChatToolInvocation(undefined, toolData, tc.toolCallId, subAgentInvocationId, undefined);
-	invocation.invocationMessage = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", tc.displayName);
+	invocation.invocationMessage = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", displayName);
 
 	const terminalContentUri = (tc.status === ToolCallStatus.Running || tc.status === ToolCallStatus.Completed)
 		? getTerminalContentUri(tc.content)

@@ -53,6 +53,7 @@ export {
 	type SessionIsReadChangedAction,
 	type SessionIsArchivedChangedAction,
 	type SessionToolCallContentChangedAction,
+	type SessionActivityChangedAction,
 	type StateAction,
 } from './protocol/actions.js';
 

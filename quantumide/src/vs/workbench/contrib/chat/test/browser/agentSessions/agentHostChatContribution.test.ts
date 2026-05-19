@@ -520,6 +520,22 @@ function createContribution(disposables: DisposableStore, opts?: { authServiceOv
 	return { contribution, listController, sessionHandler, agentHostService, chatAgentService, chatWidgetService, chatService, instantiationService, openerService };
 }
 
+function createOpenAISessionHandler(disposables: DisposableStore) {
+	const { instantiationService, agentHostService, chatAgentService, chatWidgetService, chatService, openerService } = createTestServices(disposables);
+	const listController = disposables.add(instantiationService.createInstance(AgentHostSessionListController, 'agent-host-openai', 'openai', agentHostService, undefined, 'local'));
+	const sessionHandler = disposables.add(instantiationService.createInstance(AgentHostSessionHandler, {
+		provider: 'openai' as const,
+		agentId: 'agent-host-openai',
+		sessionType: 'agent-host-openai',
+		fullName: 'Agent Host - OpenAI',
+		description: 'OpenAI-compatible provider',
+		connection: agentHostService,
+		connectionAuthority: 'local',
+		isNewSession: sessionResource => listController.isNewSession(sessionResource),
+	}));
+	return { sessionHandler, agentHostService, chatAgentService, chatWidgetService, chatService, instantiationService, openerService };
+}
+
 function makeRequest(overrides: Partial<{ message: string; sessionResource: URI; variables: IChatAgentRequest['variables']; userSelectedModelId: string; modelConfiguration: Record<string, unknown>; agentHostSessionConfig: Record<string, string>; agentId: string }> = {}): IChatAgentRequest {
 	return upcastPartial<IChatAgentRequest>({
 		sessionResource: overrides.sessionResource ?? URI.from({ scheme: 'untitled', path: '/chat-1' }),
@@ -1195,6 +1211,79 @@ suite('AgentHostChatContribution', () => {
 			const result = await turnPromise;
 
 			assert.strictEqual(result.details, 'Opus 4.7 • 1.5 credits');
+		}));
+
+		test('OpenAI provider surfaces failed tool invocation progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createOpenAISessionHandler(disposables);
+
+			const { turnPromise, collected, session, turnId, fire } = await startTurn(sessionHandler, agentHostService, chatAgentService, disposables, {
+				agentId: 'agent-host-openai',
+			});
+
+			fire({ type: 'session/toolCallStart', session, turnId, toolCallId: 'tc-fail', toolName: 'search_workspace_text', displayName: 'Searched workspace', _meta: { toolKind: 'search' } } as SessionAction);
+			fire({ type: 'session/toolCallReady', session, turnId, toolCallId: 'tc-fail', invocationMessage: 'Searched workspace', confirmed: 'not-needed' } as SessionAction);
+			fire({
+				type: 'session/toolCallComplete', session, turnId, toolCallId: 'tc-fail',
+				result: { success: false, pastTenseMessage: 'Searched workspace failed', error: { message: 'Permission denied' }, content: [{ type: 'text', text: 'Permission denied' }] },
+			} as SessionAction);
+			fire({ type: 'session/turnComplete', session, turnId } as SessionAction);
+
+			await turnPromise;
+
+			const invocation = collected.flat().find((p): p is IChatToolInvocation => p.kind === 'toolInvocation' && p.toolCallId === 'tc-fail');
+			assert.ok(invocation, 'expected failed tool invocation');
+			assert.strictEqual(IChatToolInvocation.isComplete(invocation!), true);
+			const pastTense = invocation!.pastTenseMessage;
+			const pastTenseText = typeof pastTense === 'string' ? pastTense : pastTense?.value;
+			assert.ok(pastTenseText?.includes('failed'));
+		}));
+
+		test('OpenAI provider routes tool activity to toolInvocation progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createOpenAISessionHandler(disposables);
+
+			const { turnPromise, collected, session, turnId, fire } = await startTurn(sessionHandler, agentHostService, chatAgentService, disposables, {
+				agentId: 'agent-host-openai',
+			});
+
+			fire({ type: 'session/toolCallStart', session, turnId, toolCallId: 'tc-openai-search', toolName: 'search_workspace_text', displayName: 'Searched workspace', _meta: { toolKind: 'search' } } as SessionAction);
+			fire({ type: 'session/toolCallReady', session, turnId, toolCallId: 'tc-openai-search', invocationMessage: 'Searched workspace', confirmed: 'not-needed' } as SessionAction);
+			fire({
+				type: 'session/toolCallComplete', session, turnId, toolCallId: 'tc-openai-search',
+				result: { success: true, pastTenseMessage: 'Searched workspace', content: [{ type: 'text', text: 'Found 1 match' }] },
+			} as SessionAction);
+			fire({ type: 'session/turnComplete', session, turnId } as SessionAction);
+
+			await turnPromise;
+
+			const toolInvocations = collected.flat().filter(p => p.kind === 'toolInvocation') as IChatToolInvocation[];
+			assert.ok(toolInvocations.length >= 1, 'OpenAI tool activity should surface as toolInvocation progress');
+			const invocation = toolInvocations.find(t => t.toolCallId === 'tc-openai-search');
+			assert.ok(invocation, 'expected search tool invocation');
+			assert.strictEqual(IChatToolInvocation.isComplete(invocation!), true);
+		}));
+
+		test('OpenAI provider routes every SessionDelta to chat progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createOpenAISessionHandler(disposables);
+
+			const { turnPromise, collected, session, turnId, fire } = await startTurn(sessionHandler, agentHostService, chatAgentService, disposables, {
+				agentId: 'agent-host-openai',
+			});
+
+			fire({ type: 'session/responsePart', session, turnId, part: { kind: 'markdown', id: 'md-openai', content: '' } } as SessionAction);
+			fire({ type: 'session/toolCallStart', session, turnId, toolCallId: 'tc-openai', toolName: 'read_file', displayName: 'Read File' } as SessionAction);
+			fire({ type: 'session/delta', session, turnId, partId: 'md-openai', content: 'alpha ' } as SessionAction);
+			fire({ type: 'session/delta', session, turnId, partId: 'md-openai', content: 'beta ' } as SessionAction);
+			fire({ type: 'session/delta', session, turnId, partId: 'md-openai', content: 'gamma' } as SessionAction);
+			fire({ type: 'session/turnComplete', session, turnId } as SessionAction);
+
+			await turnPromise;
+
+			const markdownParts = collected.flat().filter((p): p is IChatMarkdownContent => p.kind === 'markdownContent');
+			const totalContent = markdownParts.map(p => p.content.value).join('');
+			assert.ok(totalContent.includes('alpha'));
+			assert.ok(totalContent.includes('beta'));
+			assert.ok(totalContent.includes('gamma'));
+			assert.ok(markdownParts.length >= 3, `expected multiple markdown progress updates, got ${markdownParts.length}`);
 		}));
 
 		test('tool_start events become toolInvocation progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {

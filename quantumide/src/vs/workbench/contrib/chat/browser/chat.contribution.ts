@@ -376,7 +376,7 @@ configurationRegistry.registerConfiguration({
 		[ChatConfiguration.IncrementalRendering]: {
 			type: 'boolean',
 			description: nls.localize('chat.experimental.incrementalRendering.enabled', "Enables incremental rendering with optional block-level animation when streaming chat responses."),
-			default: false,
+			default: isQuantumIDEProduct,
 			tags: ['experimental'],
 		},
 		[ChatConfiguration.IncrementalRenderingStyle]: {
@@ -404,7 +404,7 @@ configurationRegistry.registerConfiguration({
 				nls.localize('chat.experimental.incrementalRendering.buffering.paragraph', "Buffers content until a paragraph break before rendering."),
 			],
 			description: nls.localize('chat.experimental.incrementalRendering.buffering', "Controls how content is buffered before rendering during incremental rendering. Lower buffering levels render faster but may show incomplete sentences or partially formed markdown."),
-			default: 'word',
+			default: isQuantumIDEProduct ? 'off' : 'word',
 			tags: ['experimental'],
 		},
 		'chat.detectParticipant.enabled': {

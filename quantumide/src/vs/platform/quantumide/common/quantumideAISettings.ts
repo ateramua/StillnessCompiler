@@ -20,6 +20,14 @@ export const enum QuantumIDEAISettingId {
 	OpenAIGPT41Enabled = 'quantumide.ai.openai.models.gpt41.enabled',
 	OpenAIGPT41MiniEnabled = 'quantumide.ai.openai.models.gpt41Mini.enabled',
 	OpenAIGPT4oEnabled = 'quantumide.ai.openai.models.gpt4o.enabled',
+	OpenAIStreamingEnabled = 'quantumide.ai.openai.streaming.enabled',
+	OpenAIStreamingCoalesceMs = 'quantumide.ai.openai.streaming.coalesceMs',
+	OpenAIStreamingAdaptiveCoalescing = 'quantumide.ai.openai.streaming.adaptiveCoalescing',
+	AgentShowActivitySteps = 'quantumide.ai.agent.showActivitySteps',
+	AgentActivityVerbosity = 'quantumide.ai.agent.activityVerbosity',
+	AgentMaxToolIterations = 'quantumide.ai.agent.maxToolIterations',
+	AgentMaxActivityStepsPerTurn = 'quantumide.ai.agent.maxActivityStepsPerTurn',
+	AgentActivityDebugOutput = 'quantumide.ai.agent.activityDebugOutput',
 	AgentAutoApplyEdits = 'quantumide.ai.agent.autoApplyEdits',
 	AgentRequireConfirmationForTerminal = 'quantumide.ai.agent.requireConfirmationForTerminal',
 	AgentRequireConfirmationForFileDelete = 'quantumide.ai.agent.requireConfirmationForFileDelete',
@@ -57,5 +65,7 @@ export const enum QuantumIDEAICommandId {
 export const QuantumIDEOpenAIProviderId = 'openai';
 export const QuantumIDEOpenAIApiKeyEnvVar = 'QUANTUMIDE_OPENAI_API_KEY';
 export const QuantumIDEOpenAIBaseUrlEnvVar = 'QUANTUMIDE_OPENAI_BASE_URL';
+export const QuantumIDEOpenAIStreamEnvVar = 'QUANTUMIDE_OPENAI_STREAM';
+export const QuantumIDEAgentActivityEnvVar = 'QUANTUMIDE_AGENT_ACTIVITY';
 export const QuantumIDEOpenAIApiKeySecretStorageKey = 'quantumide.openai.apiKey';
 export const QuantumIDEOpenAIProtectedResourceId = 'https://quantumide.local/openai';
