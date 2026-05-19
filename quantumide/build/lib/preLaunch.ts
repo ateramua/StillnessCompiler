@@ -33,7 +33,9 @@ async function ensureNodeModules() {
 }
 
 async function getElectron() {
-	await runProcess(npm, ['run', 'electron']);
+	// Invoke electron.ts directly so launch works when `npm` on PATH is >= 11.2
+	// (npm run electron sets npm_config_user_agent and fails assertNpmVersionForElectronDownload).
+	await runProcess(process.execPath, ['build/lib/electron.ts']);
 }
 
 async function ensureCompiled() {

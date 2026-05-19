@@ -45,7 +45,7 @@ OpenAI uses the **raw progress path** in `AgentHostSessionHandler`:
 - `OpenAIRawToolProgressRouter` maps tool actions → `toolInvocation` chat parts
 - `SessionReasoning` → `{ kind: 'thinking', value }` progress
 
-Enable/disable: `quantumide.ai.agent.showActivitySteps` (env: `QUANTUMIDE_AGENT_ACTIVITY=0`).
+Enable/disable: `quantumide.ai.agent.showActivitySteps` in settings. Env `QUANTUMIDE_AGENT_ACTIVITY=0` applies in the **agent host process** only (not the workbench renderer).
 
 ## Debug
 

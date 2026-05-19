@@ -2739,9 +2739,8 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		if (this._config.provider !== QuantumIDEOpenAIProviderId) {
 			return true;
 		}
-		if (process.env['QUANTUMIDE_AGENT_ACTIVITY'] === '0') {
-			return false;
-		}
+		// Do not use process.env here — this handler runs in the browser workbench.
+		// QUANTUMIDE_AGENT_ACTIVITY env overrides are handled in the Node agent host (openAiAgent.ts).
 		return this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentShowActivitySteps) !== false;
 	}
 
