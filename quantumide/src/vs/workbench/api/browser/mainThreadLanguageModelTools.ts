@@ -14,13 +14,13 @@ import { IProductService } from '../../../platform/product/common/productService
 import { toToolSetKey } from '../../contrib/chat/common/tools/languageModelToolsContribution.js';
 import { CountTokensCallback, ILanguageModelToolsService, IToolData, IToolInvocation, IToolProgressStep, IToolResult, ToolDataSource, ToolProgress, toolResultHasBuffers, ToolSet } from '../../contrib/chat/common/tools/languageModelToolsService.js';
 import { extHostNamedCustomer, IExtHostContext } from '../../services/extensions/common/extHostCustomers.js';
-import { Dto, SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
+import { Dto, Proxied, SerializableObjectWithBuffers } from '../../services/extensions/common/proxyIdentifier.js';
 import { ExtHostContext, ExtHostLanguageModelToolsShape, IToolDataDto, IToolDefinitionDto, MainContext, MainThreadLanguageModelToolsShape } from '../common/extHost.protocol.js';
 
 @extHostNamedCustomer(MainContext.MainThreadLanguageModelTools)
 export class MainThreadLanguageModelTools extends Disposable implements MainThreadLanguageModelToolsShape {
 
-	private readonly _proxy: ExtHostLanguageModelToolsShape;
+	private readonly _proxy: Proxied<ExtHostLanguageModelToolsShape>;
 	private readonly _tools = this._register(new DisposableMap<string>());
 	private readonly _runningToolCalls = new Map</* call ID */string, {
 		countTokens: CountTokensCallback;

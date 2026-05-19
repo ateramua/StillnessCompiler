@@ -57,6 +57,8 @@ import { IAgentHostSessionWorkingDirectoryResolver } from './agentHostSessionWor
 import { IAgentHostUntitledProvisionalSessionService } from './agentHostUntitledProvisionalSessionService.js';
 import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallToSerialized, finalizeToolInvocation, getTerminalContentUri, isSubagentTool, makeAhpTerminalToolSessionId, parseAhpTerminalToolSessionId, rawMarkdownToString, stringOrMarkdownToString, toolCallStateToInvocation, turnsToHistory, updateRunningToolSpecificData, userMessageToVariableData, type IToolCallFileEdit, type TurnModelLookup } from './stateToProgressAdapter.js';
 import { OpenAIRawToolProgressRouter } from './openaiRawToolProgress.js';
+import { localizeAgentSessionActivity } from './agentActivityLocalizedLabels.js';
+import { type AgentActivityVerbosity } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
 import { IQuantumIDEWorkspaceContextService } from '../../../../../services/quantumide/common/quantumideWorkspaceContext.js';
 
 // =============================================================================
@@ -1149,8 +1151,10 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			let stateProgressSeen = false;
 			const useRawStreamingProgress = this._config.provider === QuantumIDEOpenAIProviderId;
 			const showActivitySteps = this._isAgentActivityStepsEnabled();
+			const activityWorkingDirectory = this._resolveRequestedWorkingDirectory(request.sessionResource);
+			const activityVerbosity = this._getAgentActivityVerbosity();
 			const rawToolRouter = useRawStreamingProgress && showActivitySteps
-				? store.add(new OpenAIRawToolProgressRouter(request.sessionResource, this._config.connectionAuthority, this._getMaxActivityStepsPerTurn()))
+				? store.add(new OpenAIRawToolProgressRouter(request.sessionResource, this._config.connectionAuthority, this._getMaxActivityStepsPerTurn(), activityWorkingDirectory, activityVerbosity))
 				: undefined;
 			let rawCompletedTurn: Turn | undefined;
 			const rawProgress = (parts: IChatProgress[]) => {
@@ -1163,7 +1167,14 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				if (!('session' in action) || action.session !== session.toString()) {
 					return;
 				}
-				if (!('turnId' in action) || action.turnId !== turnId) {
+				if ('turnId' in action && action.turnId !== turnId) {
+					return;
+				}
+				if (useRawStreamingProgress && showActivitySteps && action.type === ActionType.SessionActivityChanged) {
+					const activity = 'activity' in action ? action.activity : undefined;
+					if (activity) {
+						rawProgress([{ kind: 'progressMessage', content: new MarkdownString(localizeAgentSessionActivity(activity)), shimmer: true }]);
+					}
 					return;
 				}
 				if (action.type === ActionType.SessionDelta) {
@@ -2747,6 +2758,14 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 	private _getMaxActivityStepsPerTurn(): number {
 		const configured = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn);
 		return typeof configured === 'number' && configured >= 1 && configured <= 200 ? configured : 50;
+	}
+
+	private _getAgentActivityVerbosity(): AgentActivityVerbosity {
+		const configured = this._configurationService.getValue<string>(QuantumIDEAISettingId.AgentActivityVerbosity);
+		if (configured === 'minimal' || configured === 'verbose') {
+			return configured;
+		}
+		return 'normal';
 	}
 
 	private async _appendQuantumIDEWorkspaceContextAttachment(attachments: MessageAttachment[]): Promise<void> {

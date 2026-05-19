@@ -12,7 +12,7 @@ import { ToolCallStatus, TurnState, ResponsePartKind, getToolFileEdits, getToolO
 import { getToolKind } from '../../../../../../platform/agentHost/common/state/sessionReducers.js';
 import { AGENT_HOST_SCHEME, toAgentHostUri } from '../../../../../../platform/agentHost/common/agentHostUri.js';
 import { MessageAttachmentKind, type FileEdit, type MessageAttachment, type StringOrMarkdown, type TextRange, type UserMessage } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
-import { type IChatModifiedFilesConfirmationData, type IChatProgress, type IChatSearchToolInvocationData, type IChatTerminalToolInvocationData, type IChatToolInputInvocationData, type IChatToolInvocationSerialized, ToolConfirmKind } from '../../../common/chatService/chatService.js';
+import { type IChatModifiedFilesConfirmationData, type IChatProgress, type IChatSearchToolInvocationData, type IChatSimpleToolInvocationData, type IChatTerminalToolInvocationData, type IChatToolInputInvocationData, type IChatToolInvocationSerialized, type IChatToolResourcesInvocationData, ToolConfirmKind } from '../../../common/chatService/chatService.js';
 import { type IChatSessionHistoryItem } from '../../../common/chatSessionsService.js';
 import { ChatToolInvocation } from '../../../common/model/chatProgressTypes/chatToolInvocation.js';
 import { type IChatRequestVariableData } from '../../../common/model/chatModel.js';
@@ -21,7 +21,8 @@ import { type IToolConfirmationMessages, type IToolData, ToolDataSource, ToolInv
 import { basename, isEqual } from '../../../../../../base/common/resources.js';
 import { hasKey } from '../../../../../../base/common/types.js';
 import { localize } from '../../../../../../nls.js';
-import { resolveAgentActivityDisplayName } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
+import { type AgentActivityVerbosity } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
+import { buildAgentActivityToolData, buildAgentActivityToolSpecificData, resolveLocalizedAgentActivityProgressMessage } from './agentActivityToolPresentation.js';
 import type { IRange } from '../../../../../../editor/common/core/range.js';
 
 /**
@@ -341,12 +342,17 @@ function getTerminalLanguage(tc: ToolCallState) {
  * Converts a completed tool call from the protocol state into a serialized
  * tool invocation suitable for history replay.
  */
-export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined): IChatToolInvocationSerialized {
-	const displayName = resolveAgentActivityDisplayName(tc.toolName, tc.displayName, 'toolInput' in tc ? tc.toolInput : undefined);
+export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined, workingDirectory?: URI, verbosity: AgentActivityVerbosity = 'normal'): IChatToolInvocationSerialized {
+	const toolInput = 'toolInput' in tc ? tc.toolInput : undefined;
+	const displayName = buildAgentActivityToolData(tc.toolName, tc.displayName, toolInput, verbosity).displayName;
 	const terminalContentUri = tc.status === ToolCallStatus.Completed ? getTerminalContentUri(tc.content) : undefined;
 	const isTerminal = !!terminalContentUri;
 	const isSuccess = tc.status === ToolCallStatus.Completed && tc.success;
-	const invocationMsg = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", displayName);
+	const runningMsg = resolveLocalizedAgentActivityProgressMessage(tc.toolName, tc.displayName, toolInput, false, undefined, verbosity);
+	const completedMsg = resolveLocalizedAgentActivityProgressMessage(tc.toolName, tc.displayName, toolInput, true, isSuccess, verbosity);
+	const invocationMsg = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority)
+		?? runningMsg
+		?? localize('ahp.running', "Running {0}...", displayName);
 
 	// Check for subagent content
 	const subagentContent = tc.status === ToolCallStatus.Completed ? getToolSubagentContent(tc) : undefined;
@@ -354,8 +360,8 @@ export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentIn
 	if (isSubagent && tc.status === ToolCallStatus.Completed) {
 		const resultText = getToolOutputText(tc);
 		const pastTenseMsg = isSuccess
-			? stringOrMarkdownToString(tc.pastTenseMessage, connectionAuthority) ?? invocationMsg
-			: invocationMsg;
+			? stringOrMarkdownToString(tc.pastTenseMessage, connectionAuthority) ?? completedMsg
+			: completedMsg;
 		return {
 			kind: 'toolInvocationSerialized',
 			toolCallId: tc.toolCallId,
@@ -379,8 +385,9 @@ export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentIn
 		};
 	}
 
-	let toolSpecificData: IChatTerminalToolInvocationData | IChatSearchToolInvocationData | undefined;
-	if (isTerminal || getToolKind(tc) === 'terminal') {
+	let toolSpecificData: IChatTerminalToolInvocationData | IChatSearchToolInvocationData | IChatSimpleToolInvocationData | IChatToolResourcesInvocationData | undefined
+		= buildAgentActivityToolSpecificData(tc, workingDirectory, connectionAuthority, verbosity);
+	if (!toolSpecificData && (isTerminal || getToolKind(tc) === 'terminal')) {
 		toolSpecificData = {
 			kind: 'terminal',
 			commandLine: { original: getTerminalInput(tc) ?? '' },
@@ -390,13 +397,13 @@ export function completedToolCallToSerialized(tc: ICompletedToolCall, subAgentIn
 			terminalCommandOutput: getTerminalOutput(tc),
 			terminalCommandState: { exitCode: isSuccess ? 0 : 1 },
 		};
-	} else if (getToolKind(tc) === 'search') {
+	} else if (!toolSpecificData && getToolKind(tc) === 'search') {
 		toolSpecificData = { kind: 'search' };
 	}
 
 	const pastTenseMsg = isSuccess
-		? stringOrMarkdownToString(tc.pastTenseMessage, connectionAuthority) ?? invocationMsg
-		: invocationMsg;
+		? stringOrMarkdownToString(tc.pastTenseMessage, connectionAuthority) ?? completedMsg
+		: completedMsg;
 
 	return {
 		kind: 'toolInvocationSerialized',
@@ -637,14 +644,10 @@ export function stringOrMarkdownToString(value: StringOrMarkdown | undefined, co
  *   wrapping remote file URIs into `vscode-agent-host:` URIs. Omit to skip
  *   URI wrapping (e.g. in tests that don't exercise the confirmation UI).
  */
-export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined): ChatToolInvocation {
-	const displayName = resolveAgentActivityDisplayName(tc.toolName, tc.displayName, 'toolInput' in tc ? tc.toolInput : undefined);
-	const toolData: IToolData = {
-		id: tc.toolName,
-		source: ToolDataSource.Internal,
-		displayName,
-		modelDescription: tc.toolName,
-	};
+export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationId: string | undefined, sessionResource: URI, connectionAuthority: string | undefined, workingDirectory?: URI, verbosity: AgentActivityVerbosity = 'normal'): ChatToolInvocation {
+	const toolInput = 'toolInput' in tc ? tc.toolInput : undefined;
+	const toolData: IToolData = buildAgentActivityToolData(tc.toolName, tc.displayName, toolInput, verbosity);
+	const displayName = toolData.displayName;
 
 	if (tc.status === ToolCallStatus.PendingConfirmation) {
 		// Tool needs confirmation — create with confirmation messages.
@@ -712,7 +715,18 @@ export function toolCallStateToInvocation(tc: ToolCallState, subAgentInvocationI
 	}
 
 	const invocation = new ChatToolInvocation(undefined, toolData, tc.toolCallId, subAgentInvocationId, undefined);
-	invocation.invocationMessage = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority) ?? localize('ahp.running', "Running {0}...", displayName);
+	const isComplete = tc.status === ToolCallStatus.Completed;
+	const progressMessage = resolveLocalizedAgentActivityProgressMessage(
+		tc.toolName,
+		tc.displayName,
+		toolInput,
+		isComplete,
+		isComplete ? tc.success : undefined,
+		verbosity,
+	);
+	invocation.invocationMessage = stringOrMarkdownToString(tc.invocationMessage, connectionAuthority)
+		?? progressMessage
+		?? localize('ahp.running', "Running {0}...", displayName);
 
 	const terminalContentUri = (tc.status === ToolCallStatus.Running || tc.status === ToolCallStatus.Completed)
 		? getTerminalContentUri(tc.content)
@@ -814,7 +828,7 @@ export interface IToolCallFileEdit {
  * Returns file edits that the caller should route through the editing
  * session's external edits pipeline.
  */
-export function finalizeToolInvocation(invocation: ChatToolInvocation, tc: ToolCallState, backendSession: URI, connectionAuthority: string | undefined): IToolCallFileEdit[] {
+export function finalizeToolInvocation(invocation: ChatToolInvocation, tc: ToolCallState, backendSession: URI, connectionAuthority: string | undefined, workingDirectory?: URI, verbosity: AgentActivityVerbosity = 'normal'): IToolCallFileEdit[] {
 	const isCompleted = tc.status === ToolCallStatus.Completed;
 	const isCancelled = tc.status === ToolCallStatus.Cancelled;
 	const terminalContentUri = tc.status === ToolCallStatus.Running || tc.status === ToolCallStatus.Completed
@@ -863,6 +877,16 @@ export function finalizeToolInvocation(invocation: ChatToolInvocation, tc: ToolC
 		};
 	} else if (isCompleted && tc.pastTenseMessage) {
 		invocation.pastTenseMessage = stringOrMarkdownToString(tc.pastTenseMessage, connectionAuthority);
+	}
+
+	if (isCompleted) {
+		const activityData = buildAgentActivityToolSpecificData(tc, workingDirectory, connectionAuthority, verbosity);
+		if (activityData) {
+			invocation.toolSpecificData = activityData;
+			invocation.presentation = undefined;
+		}
+		invocation.pastTenseMessage = invocation.pastTenseMessage
+			?? resolveLocalizedAgentActivityProgressMessage(tc.toolName, tc.displayName, 'toolInput' in tc ? tc.toolInput : undefined, true, tc.success, verbosity);
 	}
 
 	const isFailure = (isCompleted && !tc.success) || isCancelled;

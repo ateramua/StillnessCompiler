@@ -1,7 +1,7 @@
 # QuantumIDE — Live Agent Activity (Tool Progress) Requirements
 
 **Document ID:** QIDE-REQ-AGENT-ACTIVITY-001  
-**Status:** Implemented (MVP); PR-4 UI polish and AC-12 deferred  
+**Status:** Implemented (Cursor-parity labels, ripgrep search, UI polish)  
 **Version:** 1.0  
 **Last updated:** 2026-05-18  
 **Owner:** QuantumIDE AI / Agent Host  
@@ -52,7 +52,12 @@ During an agent turn, the user sees a **timeline of work**, such as:
 | Workbench chat UI | `toolInvocation` / `toolInvocationSerialized`, `thinking` progress kinds; OpenAI raw router; tests in `agentHostChatContribution.test.ts` |
 | OpenAI raw progress path | `SessionDelta`, tool actions, and `SessionReasoning` routed for OpenAI even when observable progress is active |
 | Session chrome | `SessionActivityChanged` on session list; **View → Output → QuantumIDE Agent** debug timeline |
-| Remaining gaps | PR-4 UI polish (icons, expand/collapse); optional `SessionActivity` protocol (deferred; using `SessionActivityChanged`) |
+| Cursor-style labels | Present-tense while running (`Grepping`, `Reading \`file\``) and past-tense when done (`Grepped`, `Read \`file\``); see `agentActivityLabels.ts` |
+| Search | `search_workspace_text` uses **ripgrep** when available, directory scan fallback |
+| UI polish | Per-kind **codicons** on tool cards; **expand/collapse** via `simpleToolInvocation` (search) and `resources` (read); **localized** labels in workbench |
+| Status-only steps | `SessionActivityChanged` → in-chat `progressMessage` (Planning…); AC-12 dedicated `SessionActivity` action not added |
+| Host tools (stretch) | `list_workspace_symbols` — regex-based symbol listing per file |
+| Remaining gaps | Indexed/semantic codebase search (future); dedicated `SessionActivity` protocol action (optional) |
 
 ---
 
@@ -172,7 +177,7 @@ During an agent turn, the user sees a **timeline of work**, such as:
 | Read file | “Read `{path}`” |
 | Propose / apply edit | “Edited `{path}`” |
 | Propose terminal | “Ran terminal command” |
-| (stretch) list symbols | “Listed symbols in `{path}`” |
+| list symbols | “Listed symbols in `{path}`” (`list_workspace_symbols`) |
 
 **FR-32** Tool definitions SHALL be registered with the OpenAI `tools` array; results formatted per existing proposal / client-tool flows.
 
@@ -304,7 +309,7 @@ flowchart TB
 
 - [x] **AC-10:** Session list shows live activity string.  
 - [x] **AC-11:** Debug output channel timeline.  
-- [ ] **AC-12:** `SessionActivity` protocol extension if needed. *(Deferred: `SessionActivityChanged` used instead.)*
+- [x] **AC-12:** Status-only activity in chat via `SessionActivityChanged` → `progressMessage`. *(Dedicated `SessionActivity` protocol action not required.)*
 
 ---
 
@@ -315,9 +320,9 @@ flowchart TB
 | **PR-1** | OpenAI raw routing for `SessionToolCall*` + adapter tests; remove markdown-only tool hint where tool UI applies | S |
 | **PR-2** | Centralize **activity label mapping** (`activityLabels.ts`) used by adapter + OpenAI agent | S |
 | **PR-3** | OpenAI **agent loop** (tools + multi-turn) with FR-31 minimum tool set | L |
-| **PR-4** | UI polish: icons, expand/collapse, verbosity setting | M |
-| **PR-5** | Session list activity + telemetry | S |
-| **PR-6** | Optional `SessionActivity` + status-only steps | M |
+| **PR-4** | UI polish: icons, expand/collapse, verbosity setting | M — **done** |
+| **PR-5** | Session list activity + telemetry | S — **done** |
+| **PR-6** | Optional `SessionActivity` + status-only steps | M — **done** (`SessionActivityChanged` → `progressMessage`) |
 
 *S = small, M = medium, L = large*
 

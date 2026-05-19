@@ -32,7 +32,7 @@ Set `_meta.toolKind` on `SessionToolCallStart` when known (`search`, `read`, `ed
 Implementation: `src/vs/platform/agentHost/node/openai/openAiAgent.ts`
 
 - Multi-step tool loop (`_runAgentTurnLoop`)
-- Host tools: `search_workspace_text`, `read_workspace_file` (`openaiHostTools.ts`)
+- Host tools: `search_workspace_text`, `read_workspace_file`, `list_workspace_symbols` (`openaiHostTools.ts`; search uses ripgrep when available)
 - Streams tool names early → preview `SessionToolCallStart`
 - Tracks in-flight tools; cancel emits failed `SessionToolCallComplete`
 - Reasoning: `reasoning_content` / `reasoning` SSE deltas → `SessionReasoning`
@@ -44,6 +44,7 @@ OpenAI uses the **raw progress path** in `AgentHostSessionHandler`:
 - `SessionDelta` and tool actions bypass `stateProgressSeen` gating when provider is OpenAI
 - `OpenAIRawToolProgressRouter` maps tool actions → `toolInvocation` chat parts
 - `SessionReasoning` → `{ kind: 'thinking', value }` progress
+- `SessionActivityChanged` → `{ kind: 'progressMessage' }` (e.g. Planning…)
 
 Enable/disable: `quantumide.ai.agent.showActivitySteps` in settings. Env `QUANTUMIDE_AGENT_ACTIVITY=0` applies in the **agent host process** only (not the workbench renderer).
 

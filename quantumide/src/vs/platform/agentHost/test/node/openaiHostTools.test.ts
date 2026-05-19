@@ -25,6 +25,7 @@ suite('openaiHostTools', () => {
 	test('identifies host activity tools', () => {
 		assert.strictEqual(isOpenAIHostTool('search_workspace_text'), true);
 		assert.strictEqual(isOpenAIHostTool('read_workspace_file'), true);
+		assert.strictEqual(isOpenAIHostTool('list_workspace_symbols'), true);
 		assert.strictEqual(isOpenAIHostTool('propose_file_edit'), false);
 	});
 
@@ -37,6 +38,27 @@ suite('openaiHostTools', () => {
 
 		const result = await executeOpenAIHostTool(fileService, root, 'read_workspace_file', { path: 'src/hello.ts' });
 		assert.ok(result.includes('export const hello = 1;'));
+	});
+
+	test('reads a line range when startLine and endLine are provided', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		const file = URI.joinPath(root, 'lines.txt');
+		await fileService.writeFile(file, VSBuffer.fromString('one\ntwo\nthree\nfour'));
+
+		const result = await executeOpenAIHostTool(fileService, root, 'read_workspace_file', { path: 'lines.txt', startLine: 2, endLine: 3 });
+		assert.strictEqual(result, 'two\nthree');
+	});
+
+	test('lists symbols in a workspace file', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		const file = URI.joinPath(root, 'mod.ts');
+		await fileService.writeFile(file, VSBuffer.fromString('export function hello() {}\nexport class Widget {}'));
+
+		const result = await executeOpenAIHostTool(fileService, root, 'list_workspace_symbols', { path: 'mod.ts' });
+		assert.ok(result.includes('hello'));
+		assert.ok(result.includes('Widget'));
 	});
 
 	test('searches workspace text and returns excerpts', async () => {

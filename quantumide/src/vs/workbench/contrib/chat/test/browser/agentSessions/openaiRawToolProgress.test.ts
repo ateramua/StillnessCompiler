@@ -38,6 +38,8 @@ suite('OpenAIRawToolProgressRouter', () => {
 		});
 		assert.strictEqual(ready.length, 1);
 		assert.strictEqual(ready[0].kind, 'toolInvocation');
+		const readyInvocation = ready[0] as IChatToolInvocation;
+		assert.ok(String(readyInvocation.invocationMessage).includes('foo'));
 
 		const complete = router.handleAction({
 			type: ActionType.SessionToolCallComplete,

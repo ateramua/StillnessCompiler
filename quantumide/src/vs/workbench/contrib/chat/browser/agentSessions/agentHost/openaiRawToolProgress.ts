@@ -8,6 +8,7 @@ import { ToolCallConfirmationReason, ToolCallStatus, type ToolCallState } from '
 import type { IChatProgress } from '../../../common/chatService/chatService.js';
 import { ChatToolInvocation } from '../../../common/model/chatProgressTypes/chatToolInvocation.js';
 import { IChatToolInvocation } from '../../../common/chatService/chatService.js';
+import { getAgentActivityLabel, parseAgentActivityToolArguments, type AgentActivityVerbosity } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
 import { completedToolCallToSerialized, finalizeToolInvocation, toolCallStateToInvocation } from './stateToProgressAdapter.js';
 
 export class OpenAIRawToolProgressRouter {
@@ -18,6 +19,8 @@ export class OpenAIRawToolProgressRouter {
 		private readonly _sessionResource: URI,
 		private readonly _connectionAuthority: string | undefined,
 		private readonly _maxActivityStepsPerTurn: number = 50,
+		private readonly _workingDirectory: URI | undefined = undefined,
+		private readonly _verbosity: AgentActivityVerbosity = 'normal',
 	) { }
 
 	handleAction(action: SessionAction): IChatProgress[] {
@@ -47,27 +50,31 @@ export class OpenAIRawToolProgressRouter {
 			return [];
 		}
 		this._activityStepCount++;
+		const args = parseAgentActivityToolArguments(undefined);
+		const activity = getAgentActivityLabel(action.toolName, args, this._verbosity);
 		const state: ToolCallState = {
 			status: ToolCallStatus.Running,
 			toolCallId: action.toolCallId,
 			toolName: action.toolName,
-			displayName: action.displayName,
-			invocationMessage: action.displayName,
+			displayName: action.displayName ?? activity.runningLabel,
+			invocationMessage: action.displayName ?? activity.runningLabel,
 			confirmed: ToolCallConfirmationReason.NotNeeded,
 			_meta: action._meta,
 		};
-		const invocation = toolCallStateToInvocation(state, undefined, this._sessionResource, this._connectionAuthority);
+		const invocation = toolCallStateToInvocation(state, undefined, this._sessionResource, this._connectionAuthority, this._workingDirectory, this._verbosity);
 		this._tools.set(action.toolCallId, { state, invocation });
 		return [invocation];
 	}
 
 	private _handleReady(action: SessionToolCallReadyAction): IChatProgress[] {
 		const existing = this._tools.get(action.toolCallId);
+		const args = parseAgentActivityToolArguments(action.toolInput);
+		const activity = getAgentActivityLabel(existing?.state.toolName ?? 'tool', args, this._verbosity);
 		const base = {
 			toolCallId: action.toolCallId,
 			toolName: existing?.state.toolName ?? 'tool',
-			displayName: existing?.state.displayName ?? 'Tool',
-			invocationMessage: action.invocationMessage,
+			displayName: existing?.state.displayName ?? activity.runningLabel,
+			invocationMessage: activity.runningLabel,
 			confirmationTitle: action.confirmationTitle,
 			toolInput: action.toolInput,
 			confirmed: action.confirmed ?? ToolCallConfirmationReason.NotNeeded,
@@ -78,7 +85,7 @@ export class OpenAIRawToolProgressRouter {
 		const state: ToolCallState = action.confirmed === ToolCallConfirmationReason.NotNeeded
 			? { ...base, status: ToolCallStatus.Running }
 			: { ...base, status: ToolCallStatus.PendingConfirmation };
-		const invocation = toolCallStateToInvocation(state, undefined, this._sessionResource, this._connectionAuthority);
+		const invocation = toolCallStateToInvocation(state, undefined, this._sessionResource, this._connectionAuthority, this._workingDirectory, this._verbosity);
 		this._tools.set(action.toolCallId, { state, invocation });
 		return [invocation];
 	}
@@ -91,6 +98,7 @@ export class OpenAIRawToolProgressRouter {
 			toolName: existing?.state.toolName ?? 'tool',
 			displayName: existing?.state.displayName ?? 'Tool',
 			invocationMessage: existing?.state.invocationMessage ?? 'Tool',
+			toolInput: existing?.state && 'toolInput' in existing.state ? existing.state.toolInput : undefined,
 			confirmed: existing?.state && 'confirmed' in existing.state ? existing.state.confirmed : ToolCallConfirmationReason.NotNeeded,
 			success: action.result.success,
 			pastTenseMessage: action.result.pastTenseMessage,
@@ -99,10 +107,10 @@ export class OpenAIRawToolProgressRouter {
 			_meta: existing?.state._meta,
 		};
 		if (existing && !IChatToolInvocation.isComplete(existing.invocation)) {
-			finalizeToolInvocation(existing.invocation, state, this._sessionResource, this._connectionAuthority);
+			finalizeToolInvocation(existing.invocation, state, this._sessionResource, this._connectionAuthority, this._workingDirectory, this._verbosity);
 			this._tools.delete(action.toolCallId);
 			return [];
 		}
-		return [completedToolCallToSerialized(state, undefined, this._sessionResource, this._connectionAuthority)];
+		return [completedToolCallToSerialized(state, undefined, this._sessionResource, this._connectionAuthority, this._workingDirectory, this._verbosity)];
 	}
 }

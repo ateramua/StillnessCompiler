@@ -28,7 +28,7 @@ import { CustomizationStatus, MessageAttachmentKind, ResponsePartKind, SessionIn
 import { parsePlugin, type IParsedPlugin, type INamedPluginResource } from '../../../agentPlugins/common/pluginParsers.js';
 import { IAgentConfigurationService } from '../agentConfigurationService.js';
 import { OpenAIChatStreamChunkKind, OpenAIClient, OpenAIStreamNotSupportedError, type IOpenAIChatRequest, type IOpenAIChatResponse, type IOpenAIMessage, type IOpenAIToolCall, type IOpenAIToolDefinition } from './openAiClient.js';
-import { getAgentStatusActivityLabel } from '../../../quantumide/common/agentActivityLabels.js';
+import { formatSearchCompletedLabel, getAgentStatusActivityLabel } from '../../../quantumide/common/agentActivityLabels.js';
 import { getOpenAIActivityLabel, type OpenAIActivityVerbosity } from './openaiActivityLabels.js';
 import { executeOpenAIHostTool, isOpenAIHostTool, OPENAI_HOST_ACTIVITY_TOOLS } from './openaiHostTools.js';
 import { OpenAIStreamCoalescer } from './openaiStreamCoalescer.js';
@@ -807,7 +807,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 					}
 					if (this._canEmitActivityStep(activityStepCount)) {
 						activityStepCount++;
-						this._setSessionActivity(options.record, options.session, label.label);
+						this._setSessionActivity(options.record, options.session, label.runningLabel);
 						const previewId = chunk.id ?? `stream-tool-${chunk.index}`;
 						const previewToolCall: IOpenAIToolCall = { id: previewId, name: chunk.name, arguments: '{}' };
 						this._trackActiveToolCall(options.record, previewToolCall, label);
@@ -833,7 +833,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				break;
 			}
 			if (iteration >= maxIterations) {
-				const limitMessage = `\n\nStopped after ${maxIterations} tool rounds.`;
+				const limitMessage = `\n\nReached the maximum of ${maxIterations} tool rounds for this turn. Increase **QuantumIDE AI → Max tool iterations** in Settings to allow more steps.`;
 				assistantTranscript += limitMessage;
 				options.onAnswerDelta(limitMessage);
 				break;
@@ -869,7 +869,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				turnId,
 				toolCallId,
 				toolName,
-				displayName: activity.label,
+				displayName: activity.runningLabel,
 				_meta: { toolKind: activity.kind },
 			},
 		});
@@ -1433,7 +1433,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			const activity = getOpenAIActivityLabel(toolCall.name, args, this._getActivityVerbosity());
 			if (this._canEmitActivityStep(getActivityStepCount())) {
 				addActivitySteps(1);
-				this._setSessionActivity(record, session, activity.label);
+				this._setSessionActivity(record, session, activity.runningLabel);
 			}
 			if (isOpenAIHostTool(toolCall.name)) {
 				summaries.push(await this._executeHostToolCall(session, turnId, toolCall, record, activity, getActivityStepCount));
@@ -1475,7 +1475,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			}
 		}
 		this._emitToolCallStart(session, turnId, toolCall, activity, record);
-		this._emitToolCallReady(session, turnId, toolCall, activity, ToolCallConfirmationReason.NotNeeded, `Running ${activity.label}`);
+		this._emitToolCallReady(session, turnId, toolCall, activity, ToolCallConfirmationReason.NotNeeded, activity.runningLabel);
 		try {
 			const result = await executeOpenAIHostTool(this._fileService, record.workingDirectory, toolCall.name, args);
 			this._emitToolCallComplete(session, turnId, toolCall, true, activity, result, record);
@@ -1501,7 +1501,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				turnId,
 				toolCallId: toolCall.id,
 				toolName: toolCall.name,
-				displayName: activity.label,
+				displayName: activity.runningLabel,
 				_meta: { toolKind: activity.kind },
 			},
 		});
@@ -1541,7 +1541,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				turnId,
 				toolCallId: toolCall.id,
 				toolName: clientToolName,
-				displayName: activity.label,
+				displayName: activity.runningLabel,
 				toolClientId: clientId,
 				_meta: { toolKind: activity.kind },
 			},
@@ -1580,9 +1580,9 @@ export class OpenAIAgent extends Disposable implements IAgent {
 					status: ToolCallStatus.PendingConfirmation,
 					toolCallId: toolCall.id,
 					toolName: toolCall.name,
-					displayName: activity.label,
+					displayName: activity.runningLabel,
 					invocationMessage,
-					confirmationTitle: activity.label,
+					confirmationTitle: activity.runningLabel,
 					toolInput: toolCall.arguments,
 					editable: true,
 					_meta: { toolKind: activity.kind },
@@ -1600,9 +1600,10 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		sessionRecord && this._untrackActiveToolCall(sessionRecord, toolCall.id);
 		const args = this._parseToolArguments(toolCall);
 		const content = resultText ?? this._getToolResultText(toolCall.name, args, success);
+		const pastTenseMessage = success ? this._completedActivityLabel(activity, toolCall.name, resultText) : activity.failedLabel;
 		const result: ToolCallResult = {
 			success,
-			pastTenseMessage: success ? activity.label : `${activity.label} failed`,
+			pastTenseMessage,
 			content: [{
 				type: ToolResultContentType.Text,
 				text: content,
@@ -1667,6 +1668,13 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		}
 		const text = result.content?.flatMap(part => part.type === ToolResultContentType.Text ? [part.text] : []).join('\n');
 		return text ? `${toolName} result:\n${text}` : `${toolName}: ${result.pastTenseMessage}`;
+	}
+
+	private _completedActivityLabel(activity: ReturnType<typeof getOpenAIActivityLabel>, toolName: string, resultText?: string): string {
+		if (toolName === 'search_workspace_text') {
+			return formatSearchCompletedLabel(activity.completedLabel, resultText);
+		}
+		return activity.completedLabel;
 	}
 
 	private _getToolInvocationMessage(name: string, args: Record<string, unknown>): string {

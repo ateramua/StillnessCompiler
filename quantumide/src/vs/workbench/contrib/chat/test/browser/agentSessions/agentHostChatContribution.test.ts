@@ -1238,6 +1238,21 @@ suite('AgentHostChatContribution', () => {
 			assert.ok(pastTenseText?.includes('failed'));
 		}));
 
+		test('OpenAI provider routes SessionActivityChanged to progressMessage', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+			const { sessionHandler, agentHostService, chatAgentService } = createOpenAISessionHandler(disposables);
+
+			const { turnPromise, collected, session, turnId, fire } = await startTurn(sessionHandler, agentHostService, chatAgentService, disposables, {
+				agentId: 'agent-host-openai',
+			});
+
+			fire({ type: 'session/activityChanged', session, activity: 'Planning…' } as SessionAction);
+			fire({ type: 'session/turnComplete', session, turnId } as SessionAction);
+			await turnPromise;
+
+			const progressMessages = collected.flat().filter(p => p.kind === 'progressMessage');
+			assert.ok(progressMessages.length >= 1, 'SessionActivityChanged should surface as progressMessage');
+		}));
+
 		test('OpenAI provider routes tool activity to toolInvocation progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
 			const { sessionHandler, agentHostService, chatAgentService } = createOpenAISessionHandler(disposables);
 
