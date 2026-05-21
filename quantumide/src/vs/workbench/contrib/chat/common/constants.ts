@@ -93,8 +93,46 @@ export enum ChatConfiguration {
 export enum ChatModeKind {
 	Ask = 'ask',
 	Edit = 'edit',
-	Agent = 'agent'
+	Agent = 'agent',
+	/** QuantumIDE: workspace-wide refactor transformations (§2.1). */
+	Refactor = 'refactor',
+	/** QuantumIDE: diff and code review (§2.1). */
+	Review = 'review',
+	/** QuantumIDE: command-aware terminal assistance (§2.1). */
+	Terminal = 'terminal',
+	/** QuantumIDE: task decomposition and planning (§2.1). */
+	Planning = 'planning',
 }
+
+/** Modes that use the tools agent pipeline (§2.6). */
+export function isAgenticChatModeKind(kind: ChatModeKind | undefined): boolean {
+	return kind === ChatModeKind.Agent
+		|| kind === ChatModeKind.Refactor
+		|| kind === ChatModeKind.Terminal
+		|| kind === ChatModeKind.Planning;
+}
+
+/** Modes that target explicit edit workflows (§2.4). */
+export function isEditChatModeKind(kind: ChatModeKind | undefined): boolean {
+	return kind === ChatModeKind.Edit || kind === ChatModeKind.Refactor;
+}
+
+export function isAskChatModeKind(kind: ChatModeKind | undefined): boolean {
+	return kind === ChatModeKind.Ask || kind === ChatModeKind.Review;
+}
+
+/** Mode identifier stored on requests and editing telemetry. */
+export type ChatRequestModeId =
+	| 'ask'
+	| 'edit'
+	| 'agent'
+	| 'refactor'
+	| 'review'
+	| 'terminal'
+	| 'planning'
+	| 'custom'
+	| 'applyCodeBlock'
+	| undefined;
 
 /**
  * The permission level controlling tool auto-approval behavior.

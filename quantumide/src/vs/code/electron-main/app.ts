@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { app, Details, GPUFeatureStatus, powerMonitor, protocol, session, Session, systemPreferences, WebFrameMain } from 'electron';
+import { app, BrowserWindow, Details, globalShortcut, GPUFeatureStatus, powerMonitor, protocol, session, Session, systemPreferences, WebFrameMain } from 'electron';
 import { addUNCHostToAllowlist, disableUNCAccessRestrictions } from '../../base/node/unc.js';
 import { validatedIpcMain } from '../../base/parts/ipc/electron-main/ipcMain.js';
 import { hostname, release } from 'os';
@@ -69,6 +69,7 @@ import { METERED_CONNECTION_CHANNEL } from '../../platform/meteredConnection/com
 import { MeteredConnectionChannel } from '../../platform/meteredConnection/electron-main/meteredConnectionChannel.js';
 import { MeteredConnectionMainService } from '../../platform/meteredConnection/electron-main/meteredConnectionMainService.js';
 import { IProductService } from '../../platform/product/common/productService.js';
+import { isQuantumIDEBuild } from '../../platform/quantumide/common/quantumideChatPlatform.js';
 import { getRemoteAuthority } from '../../platform/remote/common/remoteHosts.js';
 import { SharedProcess } from '../../platform/sharedProcess/electron-main/sharedProcess.js';
 import { ISignService } from '../../platform/sign/common/sign.js';
@@ -559,6 +560,30 @@ export class CodeApplication extends Disposable {
 		const win32AppUserModelId = this.productService.win32AppUserModelId;
 		if (isWindows && win32AppUserModelId) {
 			app.setAppUserModelId(win32AppUserModelId);
+		}
+
+		// QuantumIDE: open DevTools from the main process (does not depend on workbench bootstrap or renderer keybindings).
+		if (isQuantumIDEBuild(this.productService)) {
+			const openDevToolsForWindow = (browserWindow: BrowserWindow) => {
+				if (process.env['QUANTUMIDE_NO_AUTO_DEVTOOLS'] === '1') {
+					return;
+				}
+				const open = () => {
+					try {
+						if (!browserWindow.isDestroyed()) {
+							browserWindow.webContents.openDevTools({ mode: 'detach', activate: true });
+						}
+					} catch (error) {
+						this.logService.warn('[QuantumIDE] openDevTools failed', error);
+					}
+				};
+				if (browserWindow.webContents.isLoading()) {
+					browserWindow.webContents.once('did-finish-load', () => setTimeout(open, 500));
+				} else {
+					setTimeout(open, 500);
+				}
+			};
+			app.on('browser-window-created', (_event, browserWindow) => openDevToolsForWindow(browserWindow));
 		}
 
 		// Fix native tabs on macOS 10.13
@@ -1451,6 +1476,23 @@ export class CodeApplication extends Disposable {
 	}
 
 	private afterWindowOpen(instantiationService: IInstantiationService): void {
+
+		// QuantumIDE: OS-level DevTools shortcuts (work even when the renderer event loop is blocked).
+		if (isQuantumIDEBuild(this.productService)) {
+			const toggleQuantumIDEDevTools = () => {
+				const target = BrowserWindow.getFocusedWindow()
+					?? this.windowsMainService?.getLastActiveWindow()?.win;
+				target?.webContents.toggleDevTools();
+			};
+			for (const accelerator of ['F12', isMacintosh ? 'Alt+Command+I' : 'Control+Shift+I']) {
+				try {
+					globalShortcut.register(accelerator, toggleQuantumIDEDevTools);
+				} catch (error) {
+					this.logService.trace(`QuantumIDE: globalShortcut.register(${accelerator}) failed`, error);
+				}
+			}
+			this._register(this.lifecycleMainService.onWillShutdown(() => globalShortcut.unregisterAll()));
+		}
 
 		// Accurate Windows version info
 		if (isWindows) {

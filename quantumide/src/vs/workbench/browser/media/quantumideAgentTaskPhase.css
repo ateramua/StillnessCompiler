@@ -1,0 +1,12 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Agent task phase status bar entry — WCAG-friendly contrast hooks */
+.statusbar-item[id="status.quantumide.agentTaskPhase"] .statusbar-item-label {
+	font-weight: 500;
+}
+
+.statusbar-item[id="status.quantumide.agentTaskPhase"] .statusbar-item-label.error {
+	color: var(--vscode-errorForeground);
+}

@@ -1,0 +1,56 @@
+/*---------------------------------------------------------------------------------------------
+ *  QuantumIDE design tokens — parity dock, chat augmentations, settings preview
+ *--------------------------------------------------------------------------------------------*/
+
+.quantumide-chat-parity-dock {
+	--qide-space-1: 4px;
+	--qide-space-2: 8px;
+	--qide-space-3: 12px;
+	--qide-space-4: 16px;
+	--qide-radius-sm: 4px;
+	--qide-radius-md: 6px;
+	--qide-font-meta: 10px;
+	--qide-font-body: 11px;
+	--qide-font-title: 12px;
+	--qide-color-muted: var(--vscode-descriptionForeground);
+	--qide-color-success: var(--vscode-testing-iconPassed);
+	--qide-color-error: var(--vscode-errorForeground);
+	--qide-color-warning: var(--vscode-editorWarning-foreground);
+	--qide-color-accent: var(--vscode-progressBar-background);
+	--qide-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.quantumide-chat-parity-dock *,
+	.quantumide-chat-parity-dock *::before,
+	.quantumide-chat-parity-dock *::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+.quantumide-parity-context-inspector {
+	margin: var(--qide-space-2) 0;
+	padding: var(--qide-space-2);
+	border-radius: var(--qide-radius-md);
+	background: var(--vscode-editor-inactiveSelectionBackground);
+	font-size: var(--qide-font-body);
+}
+
+.quantumide-parity-context-section-row {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--qide-space-2);
+	padding: 2px 0;
+}
+
+.quantumide-parity-context-section-omitted {
+	color: var(--qide-color-warning);
+}
+
+.quantumide-parity-offline-banner {
+	color: var(--qide-color-warning);
+	font-weight: 600;
+	margin-bottom: var(--qide-space-2);
+}

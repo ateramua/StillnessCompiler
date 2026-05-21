@@ -4,16 +4,40 @@
 
 import { URI } from '../../../../../../base/common/uri.js';
 import { ActionType, type SessionAction, type SessionToolCallCompleteAction, type SessionToolCallReadyAction, type SessionToolCallStartAction } from '../../../../../../platform/agentHost/common/state/sessionActions.js';
+import { type ConfirmationOption } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
 import { ToolCallConfirmationReason, ToolCallStatus, type ToolCallState } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import type { IChatProgress } from '../../../common/chatService/chatService.js';
 import { ChatToolInvocation } from '../../../common/model/chatProgressTypes/chatToolInvocation.js';
 import { IChatToolInvocation } from '../../../common/chatService/chatService.js';
-import { getAgentActivityLabel, parseAgentActivityToolArguments, type AgentActivityVerbosity } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
+import {
+	formatActivityCapSummaryMessage,
+	shouldCoalesceActivityLabels,
+} from '../../../../../../platform/quantumide/common/agentActivityProgress.js';
+import {
+	getAgentActivityLabel,
+	parseAgentActivityToolArguments,
+	resolveAgentActivityProgressMessage,
+	type AgentActivityVerbosity,
+} from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
+import { agentActivityChatProgressMessage } from './agentActivityChatProgress.js';
 import { completedToolCallToSerialized, finalizeToolInvocation, toolCallStateToInvocation } from './stateToProgressAdapter.js';
+
+export type QuantumIDEProposeFileEditPreviewHandler = (toolCallId: string, path: string, replacement: string) => void;
+
+export type QuantumIDEToolPendingConfirmationHandler = (
+	invocation: ChatToolInvocation,
+	toolCallId: string,
+	options?: ConfirmationOption[],
+) => void;
 
 export class OpenAIRawToolProgressRouter {
 	private readonly _tools = new Map<string, { state: ToolCallState; invocation: ChatToolInvocation }>();
 	private _activityStepCount = 0;
+	private _suppressedAfterCap = 0;
+	private _capSummaryEmitted = false;
+	private readonly _previewedFileEdits = new Set<string>();
+	private _lastCoalesceLabel: string | undefined;
+	private _lastCoalesceAt: number | undefined;
 
 	constructor(
 		private readonly _sessionResource: URI,
@@ -21,6 +45,8 @@ export class OpenAIRawToolProgressRouter {
 		private readonly _maxActivityStepsPerTurn: number = 50,
 		private readonly _workingDirectory: URI | undefined = undefined,
 		private readonly _verbosity: AgentActivityVerbosity = 'normal',
+		private readonly _proposeFileEditPreview: QuantumIDEProposeFileEditPreviewHandler | undefined = undefined,
+		private readonly _onPendingConfirmation: QuantumIDEToolPendingConfirmationHandler | undefined = undefined,
 	) { }
 
 	handleAction(action: SessionAction): IChatProgress[] {
@@ -47,17 +73,31 @@ export class OpenAIRawToolProgressRouter {
 
 	private _handleStart(action: SessionToolCallStartAction): IChatProgress[] {
 		if (this._activityStepCount >= this._maxActivityStepsPerTurn) {
+			this._suppressedAfterCap++;
+			if (!this._capSummaryEmitted) {
+				this._capSummaryEmitted = true;
+				return [agentActivityChatProgressMessage(formatActivityCapSummaryMessage(this._suppressedAfterCap), false)];
+			}
 			return [];
 		}
-		this._activityStepCount++;
-		const args = parseAgentActivityToolArguments(undefined);
+		const toolInput = 'toolInput' in action && typeof action.toolInput === 'string' ? action.toolInput : undefined;
+		const args = parseAgentActivityToolArguments(toolInput);
 		const activity = getAgentActivityLabel(action.toolName, args, this._verbosity);
+		const runningLabel = action.displayName ?? activity.runningLabel;
+		const now = Date.now();
+		if (shouldCoalesceActivityLabels(this._lastCoalesceLabel, this._lastCoalesceAt, runningLabel, now)) {
+			return [];
+		}
+		this._lastCoalesceLabel = runningLabel;
+		this._lastCoalesceAt = now;
+		this._activityStepCount++;
 		const state: ToolCallState = {
 			status: ToolCallStatus.Running,
 			toolCallId: action.toolCallId,
 			toolName: action.toolName,
-			displayName: action.displayName ?? activity.runningLabel,
-			invocationMessage: action.displayName ?? activity.runningLabel,
+			displayName: runningLabel,
+			invocationMessage: runningLabel,
+			toolInput,
 			confirmed: ToolCallConfirmationReason.NotNeeded,
 			_meta: action._meta,
 		};
@@ -67,14 +107,23 @@ export class OpenAIRawToolProgressRouter {
 	}
 
 	private _handleReady(action: SessionToolCallReadyAction): IChatProgress[] {
+		this._maybePreviewProposedFileEdit(action);
 		const existing = this._tools.get(action.toolCallId);
 		const args = parseAgentActivityToolArguments(action.toolInput);
 		const activity = getAgentActivityLabel(existing?.state.toolName ?? 'tool', args, this._verbosity);
+		const runningLabel = resolveAgentActivityProgressMessage(
+			existing?.state.toolName ?? 'tool',
+			existing?.state.displayName,
+			action.toolInput,
+			false,
+			undefined,
+			this._verbosity,
+		);
 		const base = {
 			toolCallId: action.toolCallId,
 			toolName: existing?.state.toolName ?? 'tool',
 			displayName: existing?.state.displayName ?? activity.runningLabel,
-			invocationMessage: activity.runningLabel,
+			invocationMessage: runningLabel,
 			confirmationTitle: action.confirmationTitle,
 			toolInput: action.toolInput,
 			confirmed: action.confirmed ?? ToolCallConfirmationReason.NotNeeded,
@@ -87,7 +136,29 @@ export class OpenAIRawToolProgressRouter {
 			: { ...base, status: ToolCallStatus.PendingConfirmation };
 		const invocation = toolCallStateToInvocation(state, undefined, this._sessionResource, this._connectionAuthority, this._workingDirectory, this._verbosity);
 		this._tools.set(action.toolCallId, { state, invocation });
+		if (state.status === ToolCallStatus.PendingConfirmation && this._onPendingConfirmation) {
+			this._onPendingConfirmation(invocation, action.toolCallId, action.options);
+		}
 		return [invocation];
+	}
+
+	private _maybePreviewProposedFileEdit(action: SessionToolCallReadyAction): void {
+		if (!this._proposeFileEditPreview || this._previewedFileEdits.has(action.toolCallId)) {
+			return;
+		}
+		const existing = this._tools.get(action.toolCallId);
+		if (existing?.state.toolName !== 'propose_file_edit' || !action.toolInput) {
+			return;
+		}
+		try {
+			const args = JSON.parse(action.toolInput) as { path?: string; replacement?: string };
+			if (typeof args.path === 'string' && typeof args.replacement === 'string') {
+				this._previewedFileEdits.add(action.toolCallId);
+				this._proposeFileEditPreview(action.toolCallId, args.path, args.replacement);
+			}
+		} catch {
+			// ignore malformed tool input
+		}
 	}
 
 	private _handleComplete(action: SessionToolCallCompleteAction): IChatProgress[] {

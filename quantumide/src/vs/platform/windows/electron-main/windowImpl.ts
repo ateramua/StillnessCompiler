@@ -47,6 +47,7 @@ import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
 import { Color } from '../../../base/common/color.js';
+import { isQuantumIDEBuild } from '../../quantumide/common/quantumideChatPlatform.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;
@@ -221,7 +222,7 @@ export abstract class BaseWindow extends Disposable implements IBaseWindow {
 
 		// Open devtools if instructed from command line args
 		if (this.environmentMainService.args['open-devtools'] === true) {
-			win.webContents.openDevTools();
+			win.webContents.openDevTools({ mode: 'detach', activate: true });
 		}
 
 		// macOS: Window Fullscreen Transitions

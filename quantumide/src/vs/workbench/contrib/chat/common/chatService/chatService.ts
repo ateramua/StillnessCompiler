@@ -242,6 +242,8 @@ export interface IChatProgressMessage {
 	content: IMarkdownString;
 	kind: 'progressMessage';
 	shimmer?: boolean;
+	/** When true, stays visible while streamed answer text (markdown) follows — used for agent activity status. */
+	sticky?: boolean;
 }
 
 export interface IChatTask extends IChatTaskDto {

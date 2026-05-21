@@ -128,8 +128,14 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIStreamingCoalesceMs)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentMaxToolIterations)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentIterateUntilComplete)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentIterateUntilCompleteMaxContinuations)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentActivityVerbosity)
 					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentVelocityProfile)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentVelocityParallelHostTools)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentVelocityCrossRootSearch)
+					|| event.affectsConfiguration(QuantumIDEAISettingId.AgentVelocityHandoffEnabled)
 				) {
 					this._syncQuantumIDEOpenAIAgentConfig();
 				}
@@ -318,6 +324,7 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 		const maxToolIterations = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxToolIterations);
 		const maxActivitySteps = this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn);
 		const activityVerbosity = this._configurationService.getValue<string>(QuantumIDEAISettingId.AgentActivityVerbosity);
+		const velocityProfile = this._configurationService.getValue<string>(QuantumIDEAISettingId.AgentVelocityProfile);
 		this._loggedConnection?.dispatch({
 			type: ActionType.RootConfigChanged,
 			config: {
@@ -326,8 +333,14 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
 				[QuantumIDEAISettingId.OpenAIStreamingCoalesceMs]: typeof coalesceMs === 'number' ? coalesceMs : 24,
 				[QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing) !== false,
 				[QuantumIDEAISettingId.AgentMaxToolIterations]: typeof maxToolIterations === 'number' ? maxToolIterations : 8,
+				[QuantumIDEAISettingId.AgentIterateUntilComplete]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentIterateUntilComplete) !== false,
+				[QuantumIDEAISettingId.AgentIterateUntilCompleteMaxContinuations]: this._configurationService.getValue<number>(QuantumIDEAISettingId.AgentIterateUntilCompleteMaxContinuations) ?? 3,
 				[QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn]: typeof maxActivitySteps === 'number' ? maxActivitySteps : 50,
 				[QuantumIDEAISettingId.AgentActivityVerbosity]: activityVerbosity === 'minimal' || activityVerbosity === 'verbose' ? activityVerbosity : 'normal',
+				[QuantumIDEAISettingId.AgentVelocityProfile]: velocityProfile === 'ship' ? 'ship' : 'dev',
+				[QuantumIDEAISettingId.AgentVelocityParallelHostTools]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityParallelHostTools) !== false,
+				[QuantumIDEAISettingId.AgentVelocityCrossRootSearch]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityCrossRootSearch) !== false,
+				[QuantumIDEAISettingId.AgentVelocityHandoffEnabled]: this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityHandoffEnabled) !== false,
 			},
 		});
 	}

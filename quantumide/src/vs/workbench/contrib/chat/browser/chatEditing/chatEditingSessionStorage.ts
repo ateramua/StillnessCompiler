@@ -15,6 +15,7 @@ import { IFileService } from '../../../../../platform/files/common/files.js';
 import { ILogService } from '../../../../../platform/log/common/log.js';
 import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
 import { Dto } from '../../../../services/extensions/common/proxyIdentifier.js';
+import { type ChatRequestModeId } from '../../common/constants.js';
 import { ISnapshotEntry, ModifiedFileEntryState, WorkingSetDisplayMetadata } from '../../common/editing/chatEditingService.js';
 import { getKeyForChatSessionResource, IChatEditingTimelineState } from './chatEditingOperations.js';
 
@@ -267,7 +268,7 @@ interface IModifiedEntryTelemetryInfoDTO {
 	readonly command?: string;
 
 	readonly modelId?: string;
-	readonly modeId?: 'ask' | 'edit' | 'agent' | 'custom' | 'applyCodeBlock' | undefined;
+	readonly modeId?: ChatRequestModeId;
 	readonly applyCodeBlockSuggestionId?: EditSuggestionId | undefined;
 	readonly feature?: 'sideBarChat' | 'inlineChat' | undefined;
 }

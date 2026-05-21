@@ -150,6 +150,10 @@
     "yauzl": "^3.0.0",
     "yazl": "^2.4.3"
   },
+  "optionalDependencies": {
+    "@lancedb/lancedb": "^0.17.0",
+    "windows-foreground-love": "0.6.1"
+  },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.128",
     "@playwright/cli": "^0.1.9",
@@ -266,8 +270,5 @@
   },
   "bugs": {
     "url": "https://github.com/ateramua/StillnessCompiler/issues"
-  },
-  "optionalDependencies": {
-    "windows-foreground-love": "0.6.1"
   }
 }

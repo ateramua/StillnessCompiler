@@ -1,0 +1,17 @@
+/* Agent activity progress — respect reduced motion (NFR-4) */
+@media (prefers-reduced-motion: reduce) {
+	.interactive-session .progress-step.shimmer,
+	.interactive-session .chat-progress-step.shimmer {
+		animation: none !important;
+	}
+}
+
+.interactive-session .progress-step[role="status"] {
+	outline: none;
+}
+
+/* Sticky agent activity (Thinking…, Grepping…) stays visible above streamed answer text */
+.interactive-session .progress-step.shimmer-progress.shimmer,
+.interactive-session .shimmer-progress.progress-step {
+	opacity: 0.95;
+}

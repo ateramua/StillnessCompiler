@@ -17,4 +17,9 @@ fi
 nvm install "${REQ}"
 nvm use "${REQ}"
 echo "Using $(node -v) / $(npm -v)" >&2
+# When this script is launched via `npm run ...` from a global npm >=11.2, npm exports
+# npm_config_user_agent for child processes. build/lib/electron.ts rejects that UA even if PATH
+# now resolves to an older npm from nvm (see assertNpmVersionForElectronDownload). Clear it so
+# Node-driven steps match the toolchain we just selected; npm sets its own UA when invoked directly.
+unset npm_config_user_agent || true
 exec "$@"

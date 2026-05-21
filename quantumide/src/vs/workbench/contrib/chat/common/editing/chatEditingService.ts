@@ -21,6 +21,7 @@ import { createDecorator } from '../../../../../platform/instantiation/common/in
 import { IEditorPane } from '../../../../common/editor.js';
 import { ICellEditOperation } from '../../../notebook/common/notebookCommon.js';
 import { IChatMultiDiffData, IChatMultiDiffDataSerialized, IChatProgress, IChatWorkspaceEdit } from '../chatService/chatService.js';
+import { type ChatRequestModeId } from '../constants.js';
 import { ChatModel, IChatRequestDisablement, IChatResponseModel } from '../model/chatModel.js';
 import { IChatAgentResult } from '../participants/chatAgents.js';
 
@@ -82,7 +83,7 @@ export interface IModifiedEntryTelemetryInfo {
 	readonly requestId: string;
 	readonly result: IChatAgentResult | undefined;
 	readonly modelId: string | undefined;
-	readonly modeId: 'ask' | 'edit' | 'agent' | 'custom' | 'applyCodeBlock' | undefined;
+	readonly modeId: ChatRequestModeId;
 	readonly applyCodeBlockSuggestionId: EditSuggestionId | undefined;
 	readonly feature: 'sideBarChat' | 'inlineChat' | undefined;
 }

@@ -24,8 +24,12 @@ suite('openaiHostTools', () => {
 
 	test('identifies host activity tools', () => {
 		assert.strictEqual(isOpenAIHostTool('search_workspace_text'), true);
+		assert.strictEqual(isOpenAIHostTool('search_workspace_text_batch'), true);
 		assert.strictEqual(isOpenAIHostTool('read_workspace_file'), true);
 		assert.strictEqual(isOpenAIHostTool('list_workspace_symbols'), true);
+		assert.strictEqual(isOpenAIHostTool('run_workspace_check'), true);
+		assert.strictEqual(isOpenAIHostTool('apply_workspace_edits'), true);
+		assert.strictEqual(isOpenAIHostTool('search_workspace_symbols'), true);
 		assert.strictEqual(isOpenAIHostTool('propose_file_edit'), false);
 	});
 
@@ -70,5 +74,30 @@ suite('openaiHostTools', () => {
 		const result = await executeOpenAIHostTool(fileService, root, 'search_workspace_text', { query: 'activity' });
 		assert.ok(result.includes('Found 1 match'));
 		assert.ok(result.includes('activity'));
+	});
+
+	test('apply_workspace_edits respects autoApplyEdits gate', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		const blocked = await executeOpenAIHostTool(fileService, root, 'apply_workspace_edits', {
+			edits: [{ operation: 'write', path: 'out.ts', content: 'export {};\n' }],
+		}, { autoApplyEdits: false });
+		assert.ok(blocked.includes('autoApplyEdits'));
+
+		const applied = await executeOpenAIHostTool(fileService, root, 'apply_workspace_edits', {
+			edits: [{ operation: 'write', path: 'out.ts', content: 'export {};\n' }],
+		}, { autoApplyEdits: true });
+		assert.ok(applied.includes('updated out.ts'));
+	});
+
+	test('batch search returns sections per query', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		await fileService.writeFile(URI.joinPath(root, 'a.txt'), VSBuffer.fromString('alpha'));
+		await fileService.writeFile(URI.joinPath(root, 'b.txt'), VSBuffer.fromString('beta'));
+
+		const result = await executeOpenAIHostTool(fileService, root, 'search_workspace_text_batch', { queries: ['alpha', 'beta'] });
+		assert.ok(result.includes('## Query: alpha'));
+		assert.ok(result.includes('## Query: beta'));
 	});
 });

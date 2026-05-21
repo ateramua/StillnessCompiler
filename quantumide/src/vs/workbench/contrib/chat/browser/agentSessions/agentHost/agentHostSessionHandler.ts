@@ -25,7 +25,9 @@ import { ConfirmationOptionKind, CustomizationRef, TerminalClaimKind, ToolResult
 import { ActionType, SessionTurnStartedAction, type ClientSessionAction, type SessionAction, type SessionInputCompletedAction } from '../../../../../../platform/agentHost/common/state/sessionActions.js';
 import { AHP_AUTH_REQUIRED, ProtocolError } from '../../../../../../platform/agentHost/common/state/sessionProtocol.js';
 import { buildSubagentSessionUri, getToolFileEdits, getToolSubagentContent, MessageAttachmentKind, PendingMessageKind, ResponsePartKind, SessionInputAnswerState, SessionInputAnswerValueKind, SessionInputQuestionKind, SessionInputResponseKind, StateComponents, ToolCallCancellationReason, ToolCallConfirmationReason, ToolCallStatus, TurnState, type ICompletedToolCall, type MarkdownResponsePart, type MessageAttachment, type ModelSelection, type ReasoningResponsePart, type RootState, type SessionInputAnswer, type SessionInputRequest, type SessionState, type ToolCallResponsePart, type ToolCallState, type Turn, type UsageInfo } from '../../../../../../platform/agentHost/common/state/sessionState.js';
+import { IFileService } from '../../../../../../platform/files/common/files.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
+import { IStorageService, StorageScope } from '../../../../../../platform/storage/common/storage.js';
 import { ExtensionIdentifier } from '../../../../../../platform/extensions/common/extensions.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
@@ -43,6 +45,11 @@ import { isImageVariableEntry, type IChatRequestVariableEntry, type IImageVariab
 import { coerceImageBuffer } from '../../../common/chatImageExtraction.js';
 import { getChatSessionType } from '../../../common/model/chatUri.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind } from '../../../common/constants.js';
+import { isQuantumIDEProduct } from '../../../../../../platform/quantumide/common/quantumideChatPlatform.js';
+import { formatReviewSummary } from '../../../../../../platform/quantumide/common/quantumideAgentReview.js';
+import { getQuantumIDEChatModeSystemAddon } from '../../../../../../platform/quantumide/common/quantumideChatPlatform.js';
+import { ISCMService } from '../../../../scm/common/scm.js';
+import { loadQuantumIDEWorkspacePolicies } from '../../../../../../platform/quantumide/common/quantumideWorkspacePolicies.js';
 import { IChatEditingService } from '../../../common/editing/chatEditingService.js';
 import { ChatElicitationRequestPart } from '../../../common/model/chatProgressTypes/chatElicitationRequestPart.js';
 import { ChatQuestionCarouselData } from '../../../common/model/chatProgressTypes/chatQuestionCarouselData.js';
@@ -55,11 +62,25 @@ import { getAgentHostIcon } from '../agentSessions.js';
 import { AgentHostEditingSession } from './agentHostEditingSession.js';
 import { IAgentHostSessionWorkingDirectoryResolver } from './agentHostSessionWorkingDirectoryResolver.js';
 import { IAgentHostUntitledProvisionalSessionService } from './agentHostUntitledProvisionalSessionService.js';
-import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallToSerialized, finalizeToolInvocation, getTerminalContentUri, isSubagentTool, makeAhpTerminalToolSessionId, parseAhpTerminalToolSessionId, rawMarkdownToString, stringOrMarkdownToString, toolCallStateToInvocation, turnsToHistory, updateRunningToolSpecificData, userMessageToVariableData, type IToolCallFileEdit, type TurnModelLookup } from './stateToProgressAdapter.js';
+import { activeTurnToProgress, completedToolCallToEditParts, completedToolCallToSerialized, fileEditsToExternalEdits, finalizeToolInvocation, getTerminalContentUri, isSubagentTool, makeAhpTerminalToolSessionId, parseAhpTerminalToolSessionId, rawMarkdownToString, stringOrMarkdownToString, toolCallStateToInvocation, turnsToHistory, updateRunningToolSpecificData, userMessageToVariableData, type IToolCallFileEdit, type TurnModelLookup } from './stateToProgressAdapter.js';
 import { OpenAIRawToolProgressRouter } from './openaiRawToolProgress.js';
+import { agentActivityChatProgressMessage } from './agentActivityChatProgress.js';
 import { localizeAgentSessionActivity } from './agentActivityLocalizedLabels.js';
 import { type AgentActivityVerbosity } from '../../../../../../platform/quantumide/common/agentActivityLabels.js';
-import { IQuantumIDEWorkspaceContextService } from '../../../../../services/quantumide/common/quantumideWorkspaceContext.js';
+import {
+	formatOrchestratorStepActivity,
+	getExecutionGraphPhaseActivityLabel,
+} from '../../../../../../platform/quantumide/common/agentActivityProgress.js';
+import { shouldReplaceSessionActivityMessage } from '../../../../../../platform/quantumide/common/agentActivitySession.js';
+import { IQuantumIDEExecutionGraphService } from '../../../../../services/quantumide/common/quantumideExecutionGraph.js';
+import { IQuantumIDEAgentTaskOrchestratorService } from '../../../../../services/quantumide/common/quantumideAgentTask.js';
+import { IQuantumIDEChatContextOrchestrator } from '../../../../../services/quantumide/common/quantumideChatContext.js';
+import { IQuantumIDEDiffReviewService } from '../../../../../services/quantumide/browser/quantumideDiffReviewService.js';
+import {
+	buildAgentTasksAttachment,
+	buildPinnedTaskSpecAttachment,
+	buildQuantumIDEAgentRulesAttachments,
+} from '../../../../../services/quantumide/browser/quantumideAgentVelocityAttachments.js';
 
 // =============================================================================
 // AgentHostSessionHandler - renderer-side handler for a single agent host
@@ -106,6 +127,10 @@ interface IObserveTurnOptions {
 	 * suppressed to preserve legacy behavior.
 	 */
 	readonly subAgentInvocationId?: string;
+	/** When true, markdown / reasoning progress is emitted from the raw action listener. */
+	readonly delegateStreamingProgressToRawPath?: boolean;
+	/** When true, tool invocation UI is emitted from {@link OpenAIRawToolProgressRouter} instead of this graph. */
+	readonly suppressToolInvocationSink?: boolean;
 }
 
 function getCopilotCredits(usage: UsageInfo | undefined): number | undefined {
@@ -417,7 +442,13 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		@IChatWidgetService private readonly _chatWidgetService: IChatWidgetService,
 		@ILanguageModelsService private readonly _languageModelsService: ILanguageModelsService,
 		@IOpenerService private readonly _openerService: IOpenerService,
-		@IQuantumIDEWorkspaceContextService private readonly _quantumIDEWorkspaceContextService: IQuantumIDEWorkspaceContextService,
+		@IQuantumIDEChatContextOrchestrator private readonly _quantumIDEChatContextOrchestrator: IQuantumIDEChatContextOrchestrator,
+		@ISCMService private readonly _scmService: ISCMService,
+		@IFileService private readonly _fileService: IFileService,
+		@IStorageService private readonly _storageService: IStorageService,
+		@IQuantumIDEDiffReviewService private readonly _quantumIDEDiffReviewService: IQuantumIDEDiffReviewService,
+		@IQuantumIDEExecutionGraphService private readonly _executionGraph: IQuantumIDEExecutionGraphService,
+		@IQuantumIDEAgentTaskOrchestratorService private readonly _agentTasks: IQuantumIDEAgentTaskOrchestratorService,
 	) {
 		super();
 		this._config = config;
@@ -431,8 +462,19 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		const allowlistObs = observableConfigValue<string[]>(ChatConfiguration.AgentHostClientTools, [], this._configurationService);
 		this._clientToolsObs = derived(reader => {
 			const allowlist = new Set(allowlistObs.read(reader));
+			if (isQuantumIDEProduct(this._productService.applicationName)) {
+				allowlist.add('rename');
+			}
 			const allTools = allToolsObs.read(reader);
-			return allTools.filter(t => t.toolReferenceName !== undefined && allowlist.has(t.toolReferenceName));
+			return allTools.filter(t => {
+				if (t.toolReferenceName === undefined) {
+					return false;
+				}
+				if (allowlist.has(t.toolReferenceName)) {
+					return true;
+				}
+				return isQuantumIDEProduct(this._productService.applicationName) && t.source.type === 'mcp';
+			});
 		});
 
 		// When the client tools set changes, dispatch
@@ -726,7 +768,9 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			metadata: { themeIcon: getAgentHostIcon(this._productService) },
 			slashCommands: [],
 			locations: [ChatAgentLocation.Chat],
-			modes: [ChatModeKind.Agent],
+			modes: isQuantumIDEProduct(this._productService.applicationName)
+				? [ChatModeKind.Ask, ChatModeKind.Agent, ChatModeKind.Edit, ChatModeKind.Refactor, ChatModeKind.Review, ChatModeKind.Terminal, ChatModeKind.Planning]
+				: [ChatModeKind.Agent],
 			disambiguation: [],
 		};
 
@@ -1073,7 +1117,10 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		const turnId = request.requestId;
 		this._clientDispatchedTurnIds.add(turnId);
 		const messageAttachments = await this._convertVariablesToAttachments(request);
-		await this._appendQuantumIDEWorkspaceContextAttachment(messageAttachments);
+		await this._appendQuantumIDEChatContextAttachment(messageAttachments, request.message);
+		await this._appendQuantumIDEChatModeAttachment(messageAttachments, request);
+		await this._appendWorkspacePoliciesAttachment(messageAttachments);
+		await this._appendAgentVelocityAttachments(messageAttachments);
 		if (cancellationToken.isCancellationRequested) {
 			return;
 		}
@@ -1149,19 +1196,57 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		return new Promise<Turn | undefined>(resolve => {
 			const store = new DisposableStore();
 			let stateProgressSeen = false;
-			const useRawStreamingProgress = this._config.provider === QuantumIDEOpenAIProviderId;
+			const useRawStreamingProgress = this._useQuantumIDERawStreamingProgress();
 			const showActivitySteps = this._isAgentActivityStepsEnabled();
 			const activityWorkingDirectory = this._resolveRequestedWorkingDirectory(request.sessionResource);
 			const activityVerbosity = this._getAgentActivityVerbosity();
 			const rawToolRouter = useRawStreamingProgress && showActivitySteps
-				? store.add(new OpenAIRawToolProgressRouter(request.sessionResource, this._config.connectionAuthority, this._getMaxActivityStepsPerTurn(), activityWorkingDirectory, activityVerbosity))
+				? store.add(new OpenAIRawToolProgressRouter(
+					request.sessionResource,
+					this._config.connectionAuthority,
+					this._getMaxActivityStepsPerTurn(),
+					activityWorkingDirectory,
+					activityVerbosity,
+					isQuantumIDEProduct(this._productService.applicationName)
+						? (toolCallId, path, replacement) => {
+							const root = activityWorkingDirectory ?? this._workspaceContextService.getWorkspace().folders[0]?.uri;
+							void this._quantumIDEDiffReviewService.openProposedFileEdits(
+								localize('quantumide.agent.proposeFileEdit.title', 'Proposed File Edit'),
+								[{ path, content: replacement }],
+								root,
+							);
+						}
+						: undefined,
+					(invocation, toolCallId, options) => {
+						this._awaitToolConfirmation(invocation, toolCallId, session, turnId, cancellationToken, options);
+					},
+				))
 				: undefined;
 			let rawCompletedTurn: Turn | undefined;
+			let lastSessionActivityChatLabel: string | undefined;
 			const rawProgress = (parts: IChatProgress[]) => {
 				if ((useRawStreamingProgress || !stateProgressSeen) && parts.length > 0) {
 					progress(parts);
 				}
 			};
+			if (showActivitySteps && isQuantumIDEProduct(this._productService.applicationName)) {
+				store.add(this._executionGraph.onDidChange(() => {
+					const running = this._executionGraph.getNodes().find(n => n.status === 'running');
+					if (running) {
+						rawProgress([agentActivityChatProgressMessage(getExecutionGraphPhaseActivityLabel(running.phase, running.label))]);
+					}
+				}));
+				store.add(this._agentTasks.onDidChange(() => {
+					const state = this._agentTasks.getState();
+					if (state.status === 'running') {
+						const idx = state.steps.findIndex(s => s.id === state.currentStepId);
+						const step = state.steps[idx];
+						if (step) {
+							rawProgress([agentActivityChatProgressMessage(formatOrchestratorStepActivity(idx + 1, state.steps.length, step.label))]);
+						}
+					}
+				}));
+			}
 			store.add(this._config.connection.onDidAction(envelope => {
 				const action = envelope.action;
 				if (!('session' in action) || action.session !== session.toString()) {
@@ -1170,10 +1255,14 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				if ('turnId' in action && action.turnId !== turnId) {
 					return;
 				}
-				if (useRawStreamingProgress && showActivitySteps && action.type === ActionType.SessionActivityChanged) {
+				if (showActivitySteps && useRawStreamingProgress && action.type === ActionType.SessionActivityChanged) {
 					const activity = 'activity' in action ? action.activity : undefined;
 					if (activity) {
-						rawProgress([{ kind: 'progressMessage', content: new MarkdownString(localizeAgentSessionActivity(activity)), shimmer: true }]);
+						const label = localizeAgentSessionActivity(activity);
+						if (shouldReplaceSessionActivityMessage(lastSessionActivityChatLabel, label)) {
+							lastSessionActivityChatLabel = label;
+							rawProgress([agentActivityChatProgressMessage(label)]);
+						}
 					}
 					return;
 				}
@@ -1216,6 +1305,8 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				backendSession: session,
 				sessionResource: request.sessionResource,
 				turnId,
+				delegateStreamingProgressToRawPath: useRawStreamingProgress,
+				suppressToolInvocationSink: !!rawToolRouter,
 				sink: parts => {
 					if (parts.length > 0) {
 						stateProgressSeen = true;
@@ -1457,6 +1548,9 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		store: DisposableStore,
 		opts: IObserveTurnOptions,
 	): void {
+		if (opts.delegateStreamingProgressToRawPath) {
+			return;
+		}
 		// Seed from the snapshot length so the always-on graph does not
 		// re-emit content already covered by `activeTurnToProgress` on
 		// reconnect.
@@ -1481,6 +1575,9 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		store: DisposableStore,
 		opts: IObserveTurnOptions,
 	): void {
+		if (opts.delegateStreamingProgressToRawPath) {
+			return;
+		}
 		let lastEmitted = opts.seedEmittedLengths?.get(part$.get().id) ?? 0;
 		store.add(autorun(reader => {
 			const content = part$.read(reader).content;
@@ -1522,6 +1619,37 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 	): void {
 		const toolCallId = initial.toolCallId;
 		const subAgentInvocationId = opts.subAgentInvocationId;
+
+		if (opts.suppressToolInvocationSink) {
+			const tryObserveSubagent = (tc: ToolCallState) => {
+				if (subAgentInvocationId !== undefined) {
+					return;
+				}
+				if (observedSubagentToolIds.has(toolCallId)) {
+					return;
+				}
+				const isSub = isSubagentTool(tc)
+					|| ((tc.status === ToolCallStatus.Running || tc.status === ToolCallStatus.Completed) && getToolSubagentContent(tc));
+				if (!isSub) {
+					return;
+				}
+				observedSubagentToolIds.add(toolCallId);
+				this._observeSubagentSession(opts.sessionResource, opts.backendSession, toolCallId, opts.sink, store, observedSubagentToolIds);
+			};
+			tryObserveSubagent(initial);
+			store.add(autorun(reader => {
+				const tc = part$.read(reader).toolCall;
+				if (tc.status === ToolCallStatus.Completed || tc.status === ToolCallStatus.Cancelled) {
+					const fileEdits = fileEditsToExternalEdits(tc);
+					if (fileEdits.length > 0) {
+						opts.onFileEdits?.(tc, fileEdits);
+					}
+				}
+				tryObserveSubagent(tc);
+			}));
+			return;
+		}
+
 		const adopted = opts.adoptInvocations?.get(toolCallId);
 		let invocation = adopted
 			?? toolCallStateToInvocation(initial, subAgentInvocationId, opts.backendSession, this._config.connectionAuthority);
@@ -2746,9 +2874,16 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		return this._variableEntriesToAttachments(request.variables.variables, request.sessionResource);
 	}
 
+	private _useQuantumIDERawStreamingProgress(): boolean {
+		return isQuantumIDEProduct(this._productService.applicationName);
+	}
+
 	private _isAgentActivityStepsEnabled(): boolean {
-		if (this._config.provider !== QuantumIDEOpenAIProviderId) {
-			return true;
+		if (!isQuantumIDEProduct(this._productService.applicationName)) {
+			return false;
+		}
+		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.ChatAgentActivityEnabled) === false) {
+			return false;
 		}
 		// Do not use process.env here — this handler runs in the browser workbench.
 		// QUANTUMIDE_AGENT_ACTIVITY env overrides are handled in the Node agent host (openAiAgent.ts).
@@ -2768,28 +2903,122 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		return 'normal';
 	}
 
-	private async _appendQuantumIDEWorkspaceContextAttachment(attachments: MessageAttachment[]): Promise<void> {
+	private async _appendAgentVelocityAttachments(attachments: MessageAttachment[]): Promise<void> {
 		if (this._config.provider !== QuantumIDEOpenAIProviderId) {
 			return;
 		}
+		const workspaceFolder = this._workspaceContextService.getWorkspace().folders[0]?.uri;
 		try {
-			const context = await this._quantumIDEWorkspaceContextService.buildWorkspaceContext({
-				maxChars: 14_000,
+			if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityAttachRules) !== false) {
+				const rules = await buildQuantumIDEAgentRulesAttachments(this._fileService, workspaceFolder);
+				for (let i = rules.length - 1; i >= 0; i--) {
+					attachments.unshift(rules[i]);
+				}
+			}
+			const pinned = await buildPinnedTaskSpecAttachment(this._fileService, this._storageService, workspaceFolder, StorageScope.WORKSPACE);
+			if (pinned) {
+				attachments.unshift(pinned);
+			}
+			if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityHandoffEnabled) !== false) {
+				const tasks = await buildAgentTasksAttachment(this._fileService, workspaceFolder);
+				if (tasks) {
+					attachments.unshift(tasks);
+				}
+			}
+		} catch (error) {
+			this._logService.warn('[AgentHost] Failed to build Agent Velocity attachments', error);
+		}
+	}
+
+	private async _appendQuantumIDEChatContextAttachment(attachments: MessageAttachment[], userQuery?: string): Promise<void> {
+		if (!isQuantumIDEProduct(this._productService.applicationName)) {
+			return;
+		}
+		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityAttachWorkspaceContext) === false) {
+			return;
+		}
+		try {
+			const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget);
+			const maxChars = typeof tokenBudget === 'number' && tokenBudget > 1000 ? Math.min(tokenBudget, 24_000) : 14_000;
+			const context = await this._quantumIDEChatContextOrchestrator.buildChatContext({
+				maxChars,
 				includeActiveEditor: true,
 				includeDiagnostics: true,
 				includeSCM: true,
+				includeOpenTabs: true,
+				includeTerminal: true,
+				includeNavigationHistory: true,
+				userQuery,
 			});
 			if (!context.trim()) {
 				return;
 			}
 			attachments.unshift({
 				type: MessageAttachmentKind.Simple,
-				label: 'QuantumIDE workspace context',
+				label: 'QuantumIDE chat context',
 				modelRepresentation: context,
 				_meta: { source: 'quantumide-workspace-intelligence', automatic: true },
 			});
 		} catch (error) {
-			this._logService.warn('[AgentHost] Failed to build QuantumIDE workspace context attachment', error);
+			this._logService.warn('[AgentHost] Failed to build QuantumIDE chat context attachment', error);
+		}
+	}
+
+	private async _appendWorkspacePoliciesAttachment(attachments: MessageAttachment[]): Promise<void> {
+		if (!isQuantumIDEProduct(this._productService.applicationName)) {
+			return;
+		}
+		const folder = this._workspaceContextService.getWorkspace().folders[0]?.uri;
+		try {
+			const policies = await loadQuantumIDEWorkspacePolicies(this._fileService, folder);
+			if (!policies) {
+				return;
+			}
+			attachments.unshift({
+				type: MessageAttachmentKind.Simple,
+				label: 'QuantumIDE workspace policies',
+				modelRepresentation: JSON.stringify(policies, undefined, 2),
+				_meta: { source: 'quantumide-workspace-policies' },
+			});
+		} catch (error) {
+			this._logService.warn('[AgentHost] Failed to load workspace policies', error);
+		}
+	}
+
+	private _appendQuantumIDEChatModeAttachment(attachments: MessageAttachment[], request: IChatAgentRequest): void {
+		if (!isQuantumIDEProduct(this._productService.applicationName)) {
+			return;
+		}
+		const chatModel = this._chatService.getSession(request.sessionResource);
+		const chatRequest = chatModel?.getRequests().find(item => item.id === request.requestId);
+		const modeKind = chatRequest?.modeInfo?.kind;
+		if (!modeKind) {
+			return;
+		}
+		attachments.unshift({
+			type: MessageAttachmentKind.Simple,
+			label: 'QuantumIDE chat mode',
+			modelRepresentation: getQuantumIDEChatModeSystemAddon(modeKind),
+			_meta: { source: 'quantumide-chat-mode', mode: modeKind },
+		});
+		if (modeKind === ChatModeKind.Review) {
+			const changes: { path: string; status: string }[] = [];
+			for (const repository of this._scmService.repositories) {
+				for (const group of repository.provider.groups) {
+					for (const resource of group.resources) {
+						changes.push({
+							path: resource.sourceUri.fsPath,
+							status: resource.decorations.tooltip ?? group.label,
+						});
+					}
+				}
+			}
+			attachments.unshift({
+				type: MessageAttachmentKind.Simple,
+				label: 'QuantumIDE review context',
+				modelRepresentation: formatReviewSummary(changes),
+				_meta: { source: 'quantumide-review' },
+			});
 		}
 	}
 

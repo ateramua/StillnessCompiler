@@ -19,6 +19,8 @@ import { IStorageService, StorageScope, StorageTarget } from '../../../../platfo
 import { IChatAgentService } from './participants/chatAgents.js';
 import { ChatContextKeys } from './actions/chatContextKeys.js';
 import { getChatSessionType, LocalChatSessionUri } from './model/chatUri.js';
+import product from '../../../../platform/product/common/product.js';
+import { isQuantumIDEProduct } from '../../../../platform/quantumide/common/quantumideChatPlatform.js';
 import { ChatConfiguration, ChatModeKind } from './constants.js';
 import { IHandOff } from './promptSyntax/promptFileParser.js';
 import { IAgentSource, ICustomAgent, ICustomAgentVisibility, IPromptsService, isCustomAgentVisibility, matchesSessionType, PromptsStorage } from './promptSyntax/service/promptsService.js';
@@ -282,6 +284,9 @@ class ChatModes extends Disposable implements IChatModes {
 			builtinModes.unshift(ChatMode.Agent);
 		}
 		builtinModes.push(ChatMode.Edit);
+		if (isQuantumIDEProduct(product.applicationName)) {
+			builtinModes.push(ChatMode.Refactor, ChatMode.Review, ChatMode.Terminal, ChatMode.Planning);
+		}
 		return builtinModes;
 	}
 
@@ -655,12 +660,20 @@ export namespace ChatMode {
 	export const Ask = new BuiltinChatMode(ChatModeKind.Ask, 'Ask', localize('chatDescription', "Explore and understand your code"), Codicon.question);
 	export const Edit = new BuiltinChatMode(ChatModeKind.Edit, 'Edit', localize('editsDescription', "Edit or refactor selected code"), Codicon.edit);
 	export const Agent = new BuiltinChatMode(ChatModeKind.Agent, 'Agent', localize('agentDescription', "Describe what to build"), Codicon.agent);
+	export const Refactor = new BuiltinChatMode(ChatModeKind.Refactor, 'Refactor', localize('quantumide.refactorMode', "Workspace refactor transformations"), Codicon.wand);
+	export const Review = new BuiltinChatMode(ChatModeKind.Review, 'Review', localize('quantumide.reviewMode', "Diff and code review"), Codicon.diffSingle);
+	export const Terminal = new BuiltinChatMode(ChatModeKind.Terminal, 'Terminal', localize('quantumide.terminalMode', "Command-aware terminal assistance"), Codicon.terminal);
+	export const Planning = new BuiltinChatMode(ChatModeKind.Planning, 'Planning', localize('quantumide.planningMode', "Task decomposition and planning"), Codicon.listTree);
 }
 
 export function isBuiltinChatMode(mode: IChatMode): boolean {
 	return mode.id === ChatMode.Ask.id ||
 		mode.id === ChatMode.Edit.id ||
-		mode.id === ChatMode.Agent.id;
+		mode.id === ChatMode.Agent.id ||
+		mode.id === ChatMode.Refactor.id ||
+		mode.id === ChatMode.Review.id ||
+		mode.id === ChatMode.Terminal.id ||
+		mode.id === ChatMode.Planning.id;
 }
 
 /**

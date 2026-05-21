@@ -26,6 +26,7 @@ import { INativeRunActionInWindowRequest, INativeRunKeybindingInWindowRequest, I
 import { IWindowsCountChangedEvent, IWindowsMainService, OpenContext } from '../../windows/electron-main/windows.js';
 import { IWorkspacesHistoryMainService } from '../../workspaces/electron-main/workspacesHistoryMainService.js';
 import { Disposable } from '../../../base/common/lifecycle.js';
+import { isQuantumIDEBuild } from '../../quantumide/common/quantumideChatPlatform.js';
 
 const telemetryFrom = 'menu';
 
@@ -762,6 +763,19 @@ export class Menubar extends Disposable {
 	}
 
 	private runActionInRenderer(invocation: IMenuItemInvocation): boolean {
+
+		// QuantumIDE: toggle DevTools in the main process so it works when the renderer is hung.
+		if (isQuantumIDEBuild(this.productService)
+			&& invocation.type === 'commandId'
+			&& (invocation.commandId === 'workbench.action.toggleDevTools' || invocation.commandId === 'quantumide.action.toggleDevTools')) {
+			const target = BrowserWindow.getFocusedWindow()
+				?? this.windowsMainService.getLastActiveWindow()?.win
+				?? undefined;
+			if (target && !target.isDestroyed()) {
+				target.webContents.toggleDevTools();
+				return true;
+			}
+		}
 
 		// We want to support auxililary windows that may have focus by
 		// returning their parent windows as target to support running

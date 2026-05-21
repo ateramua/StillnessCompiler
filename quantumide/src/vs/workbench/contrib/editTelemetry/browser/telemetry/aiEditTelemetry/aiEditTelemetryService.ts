@@ -5,6 +5,7 @@
 
 import { ProviderId } from '../../../../../../editor/common/languages.js';
 import { EditDeltaInfo, EditSuggestionId } from '../../../../../../editor/common/textModelEditSource.js';
+import { type ChatRequestModeId } from '../../../../chat/common/constants.js';
 import { createDecorator } from '../../../../../../platform/instantiation/common/instantiation.js';
 
 export const IAiEditTelemetryService = createDecorator<IAiEditTelemetryService>('aiEditTelemetryService');
@@ -47,18 +48,7 @@ export interface IEditTelemetryBaseData {
 
 	editDeltaInfo: EditDeltaInfo | undefined;
 
-	modeId:
-	/** User asking questions without requesting code changes */
-	| 'ask'
-	/** User requesting direct code edits or modifications */
-	| 'edit'
-	/** AI agent mode for autonomous task completion and multi-file edits */
-	| 'agent'
-	/** Custom mode defined by extensions or user settings */
-	| 'custom'
-	/** Applying a previously suggested code block */
-	| 'applyCodeBlock'
-	| undefined;
+	modeId: ChatRequestModeId;
 	applyCodeBlockSuggestionId: EditSuggestionId | undefined; // Is set if modeId is applyCodeBlock
 
 	modelId: string | undefined; // e.g. 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'

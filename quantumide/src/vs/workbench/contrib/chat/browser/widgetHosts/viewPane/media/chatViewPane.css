@@ -26,6 +26,457 @@
 	}
 }
 
+.quantumide-chat-parity-dock {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px 10px 4px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	max-height: 40vh;
+	overflow: auto;
+
+	.quantumide-chat-parity-section {
+		border: 1px solid var(--vscode-widget-border);
+		border-radius: 6px;
+		background: var(--vscode-editorWidget-background);
+	}
+
+	.quantumide-chat-parity-section-title {
+		width: 100%;
+		text-align: left;
+		padding: 6px 8px;
+		background: transparent;
+		border: none;
+		color: var(--vscode-foreground);
+		font-size: 11px;
+		font-weight: 700;
+		text-transform: uppercase;
+		cursor: pointer;
+	}
+
+	.quantumide-chat-parity-section-body {
+		padding: 0 8px 8px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		font-size: 12px;
+	}
+
+	.quantumide-chat-parity-section-body.collapsed {
+		display: none;
+	}
+
+	.quantumide-chat-parity-section.quantumide-chat-parity-section-hidden {
+		display: none !important;
+	}
+
+	.quantumide-parity-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.quantumide-parity-action,
+	.quantumide-parity-link {
+		border: 1px solid var(--vscode-button-border, var(--vscode-widget-border));
+		background: var(--vscode-button-secondaryBackground);
+		color: var(--vscode-button-secondaryForeground);
+		border-radius: 4px;
+		padding: 2px 6px;
+		cursor: pointer;
+		font-size: 11px;
+	}
+
+	.quantumide-parity-link {
+		background: transparent;
+		border: none;
+		color: var(--vscode-textLink-foreground);
+		padding: 0;
+		text-align: left;
+	}
+
+	.quantumide-parity-tree {
+		margin: 0;
+		padding-left: 14px;
+	}
+
+	.quantumide-parity-tree-item,
+	.quantumide-parity-tree-root {
+		list-style: disc;
+	}
+
+	.quantumide-parity-batch {
+		border: 1px dashed var(--vscode-widget-border);
+		border-radius: 4px;
+		padding: 4px 6px;
+	}
+
+	.quantumide-parity-inline-actions {
+		display: inline-flex;
+		margin-left: 8px;
+	}
+
+	.quantumide-parity-doc-snippet {
+		margin: 0;
+		max-height: 120px;
+		overflow: auto;
+		background: var(--vscode-textCodeBlock-background);
+		padding: 6px;
+		border-radius: 4px;
+		white-space: pre-wrap;
+	}
+
+	.quantumide-parity-empty,
+	.quantumide-parity-muted,
+	.quantumide-parity-subtitle {
+		color: var(--vscode-descriptionForeground);
+		font-size: 11px;
+		margin: 0;
+	}
+
+	.quantumide-parity-error {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 8px;
+		border-radius: 4px;
+		background: var(--vscode-inputValidation-errorBackground);
+		border: 1px solid var(--vscode-inputValidation-errorBorder);
+		color: var(--vscode-inputValidation-errorForeground);
+		font-size: 11px;
+	}
+
+	.quantumide-parity-loading {
+		font-size: 11px;
+		color: var(--vscode-descriptionForeground);
+		font-style: italic;
+	}
+
+	.quantumide-parity-card {
+		border: 1px solid var(--vscode-widget-border);
+		border-radius: 6px;
+		padding: 8px;
+		margin-bottom: 6px;
+		background: var(--vscode-editor-background);
+	}
+
+	.quantumide-parity-card-title {
+		font-weight: 600;
+		font-size: 12px;
+		margin-bottom: 4px;
+	}
+
+	.quantumide-parity-card-body {
+		font-size: 11px;
+		color: var(--vscode-descriptionForeground);
+		white-space: pre-wrap;
+		max-height: 80px;
+		overflow: auto;
+	}
+
+	.quantumide-parity-hierarchy {
+		font-size: 11px;
+		outline: none;
+	}
+
+	.quantumide-parity-tree-root-focus:focus-visible {
+		outline: 1px solid var(--vscode-focusBorder);
+		outline-offset: 1px;
+		border-radius: 3px;
+	}
+
+	.quantumide-parity-tree-viewport {
+		max-height: 280px;
+		overflow: auto;
+		position: relative;
+	}
+
+	.quantumide-parity-tree-inner {
+		min-height: 0;
+	}
+
+	.quantumide-parity-hierarchy-node.quantumide-parity-selected {
+		background: var(--vscode-list-activeSelectionBackground);
+		color: var(--vscode-list-activeSelectionForeground);
+		border-radius: 3px;
+	}
+
+	.quantumide-parity-hierarchy-node.quantumide-parity-focused {
+		outline: 1px solid var(--vscode-focusBorder);
+		outline-offset: -1px;
+	}
+
+	.quantumide-parity-hierarchy-row.quantumide-parity-drop-target {
+		background: var(--vscode-list-dropBackground);
+		border-radius: 3px;
+	}
+
+	.quantumide-parity-dragging {
+		opacity: 0.55;
+	}
+
+	.quantumide-parity-file-tree-host {
+		margin-top: 4px;
+	}
+
+	.quantumide-parity-hierarchy-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.quantumide-parity-tree-toggle {
+		border: none;
+		background: transparent;
+		cursor: pointer;
+		width: 16px;
+		padding: 0;
+		color: var(--vscode-foreground);
+	}
+
+	.quantumide-parity-tree-spacer {
+		display: inline-block;
+		width: 16px;
+	}
+
+	.quantumide-parity-hierarchy-label {
+		border: none;
+		background: transparent;
+		cursor: pointer;
+		color: var(--vscode-foreground);
+		text-align: left;
+		padding: 1px 0;
+	}
+
+	.quantumide-parity-badge {
+		font-size: 10px;
+		padding: 0 4px;
+		border-radius: 3px;
+		background: var(--vscode-badge-background);
+		color: var(--vscode-badge-foreground);
+		margin-left: 6px;
+	}
+
+	.quantumide-parity-filter-row {
+		margin-bottom: 6px;
+	}
+
+	.quantumide-parity-filter {
+		width: 100%;
+		box-sizing: border-box;
+		padding: 4px 6px;
+		border: 1px solid var(--vscode-input-border);
+		background: var(--vscode-input-background);
+		color: var(--vscode-input-foreground);
+		border-radius: 4px;
+		font-size: 11px;
+	}
+
+	.quantumide-parity-status-failed,
+	.quantumide-parity-status-error,
+	.quantumide-parity-status-conflict {
+		color: var(--vscode-errorForeground);
+	}
+
+	.quantumide-parity-status-passed {
+		color: var(--vscode-testing-iconPassed);
+	}
+
+	.quantumide-parity-status-modified,
+	.quantumide-parity-status-unstaged {
+		color: var(--vscode-gitDecoration-modifiedResourceForeground);
+	}
+
+	.quantumide-parity-timeline {
+		list-style: none;
+		margin: 0;
+		padding: 0 0 0 8px;
+		border-left: 2px solid var(--vscode-panel-border);
+	}
+
+	.quantumide-parity-timeline-item {
+		position: relative;
+		margin: 0 0 10px 12px;
+		padding: 6px 8px;
+		border-radius: 6px;
+		background: var(--vscode-editor-inactiveSelectionBackground);
+		transition: background 0.2s ease, transform 0.15s ease;
+		animation: quantumide-timeline-in 0.25s ease-out;
+	}
+
+	@keyframes quantumide-timeline-in {
+		from {
+			opacity: 0;
+			transform: translateX(-4px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	.quantumide-parity-timeline-item:hover {
+		background: var(--vscode-list-hoverBackground);
+	}
+
+	.quantumide-parity-timeline-selected {
+		background: var(--vscode-list-activeSelectionBackground);
+		color: var(--vscode-list-activeSelectionForeground);
+		outline: 1px solid var(--vscode-focusBorder);
+	}
+
+	.quantumide-parity-timeline-dot {
+		position: absolute;
+		left: -19px;
+		top: 10px;
+		font-size: 10px;
+		color: var(--vscode-textLink-foreground);
+	}
+
+	.quantumide-parity-timeline-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.quantumide-parity-timeline-head {
+		border: none;
+		background: transparent;
+		color: inherit;
+		font-weight: 600;
+		cursor: pointer;
+		padding: 0;
+		text-align: left;
+	}
+
+	.quantumide-parity-timeline-meta {
+		font-size: 10px;
+		opacity: 0.85;
+	}
+
+	.quantumide-parity-timeline-actions {
+		margin-top: 4px;
+	}
+
+	.quantumide-parity-timeline-preview {
+		margin-top: 8px;
+		padding: 8px;
+		border-radius: 6px;
+		border: 1px solid var(--vscode-panel-border);
+		background: var(--vscode-textCodeBlock-background);
+		max-height: 160px;
+		overflow: auto;
+		animation: quantumide-timeline-in 0.2s ease-out;
+	}
+
+	.quantumide-parity-timeline-diff-list {
+		margin: 4px 0 0;
+		padding-left: 16px;
+		font-size: 10px;
+		font-family: var(--monaco-monospace-font);
+	}
+
+	.quantumide-parity-timeline-diff-modified {
+		color: var(--vscode-gitDecoration-modifiedResourceForeground);
+	}
+
+	.quantumide-parity-timeline-diff-snapshot-only {
+		color: var(--vscode-gitDecoration-addedResourceForeground);
+	}
+
+	.quantumide-parity-progress-track {
+		height: 4px;
+		border-radius: 2px;
+		background: var(--vscode-progressBar-background);
+		opacity: 0.35;
+		margin: 8px 0;
+		overflow: hidden;
+	}
+
+	.quantumide-parity-progress-fill {
+		height: 100%;
+		border-radius: 2px;
+		background: var(--vscode-progressBar-background);
+		transition: width 0.25s ease-out;
+	}
+
+	.quantumide-parity-agent-task-title {
+		font-weight: 600;
+		margin: 0 0 4px;
+	}
+
+	.quantumide-parity-agent-steps {
+		margin: 8px 0;
+		padding-left: 18px;
+		font-size: 11px;
+	}
+
+	.quantumide-parity-agent-step {
+		margin-bottom: 4px;
+	}
+
+	.quantumide-parity-agent-step-current .quantumide-parity-agent-step-label {
+		font-weight: 600;
+	}
+
+	.quantumide-parity-agent-step-running .quantumide-parity-agent-step-label {
+		color: var(--vscode-progressBar-background);
+	}
+
+	.quantumide-parity-agent-step-completed .quantumide-parity-agent-step-label {
+		color: var(--vscode-testing-iconPassed);
+	}
+
+	.quantumide-parity-agent-step-failed .quantumide-parity-agent-step-label {
+		color: var(--vscode-errorForeground);
+	}
+
+	.quantumide-parity-collab-status {
+		font-weight: 600;
+		margin-bottom: 6px;
+	}
+
+	.quantumide-parity-collab-participant {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 2px 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.quantumide-parity-collab-online {
+		color: var(--vscode-testing-iconPassed);
+	}
+
+	.quantumide-parity-collab-messages {
+		margin: 6px 0;
+		padding-left: 16px;
+		font-size: 10px;
+		max-height: 80px;
+		overflow: auto;
+	}
+
+	.quantumide-parity-status-staged {
+		color: var(--vscode-gitDecoration-addedResourceForeground);
+	}
+
+	.quantumide-parity-refactor-row {
+		margin-bottom: 8px;
+		padding-bottom: 6px;
+		border-bottom: 1px dashed var(--vscode-widget-border);
+	}
+
+	.quantumide-parity-project-row {
+		margin-bottom: 4px;
+	}
+
+	.quantumide-parity-selected {
+		background: var(--vscode-list-activeSelectionBackground);
+		border-radius: 3px;
+	}
+}
+
 /* Sessions control: either sidebar or stacked */
 .chat-viewpane.has-sessions-control .agent-sessions-container {
 	display: flex;

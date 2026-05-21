@@ -60,6 +60,35 @@
 			// we want to ensure that the user configuration wins.
 			webFrame.setZoomLevel(resolvedConfiguration.zoomLevel ?? 0);
 
+			// QuantumIDE: register DevTools shortcuts before workbench.js loads (production bootstrap may omit them).
+			const product = resolvedConfiguration.product;
+			const isQuantumIDE = product?.applicationName === 'quantumide'
+				|| product?.nameShort === 'QuantumIDE'
+				|| product?.dataFolderName === '.quantumide';
+			if (isQuantumIDE) {
+				const TOGGLE_DEV_TOOLS_KB = (process.platform === 'darwin' ? 'meta-alt-73' : 'ctrl-shift-73');
+				const TOGGLE_DEV_TOOLS_KB_ALT = '123';
+				const attachDevToolsKeys = () => {
+					window.addEventListener('keydown', (e: KeyboardEvent) => {
+						const key = [
+							e.ctrlKey ? 'ctrl-' : '',
+							e.metaKey ? 'meta-' : '',
+							e.altKey ? 'alt-' : '',
+							e.shiftKey ? 'shift-' : '',
+							e.keyCode
+						].join('');
+						if (key === TOGGLE_DEV_TOOLS_KB || key === TOGGLE_DEV_TOOLS_KB_ALT) {
+							ipcRenderer.send('vscode:toggleDevTools');
+						}
+					});
+				};
+				if (document.readyState === 'loading') {
+					window.addEventListener('DOMContentLoaded', attachDevToolsKeys);
+				} else {
+					attachDevToolsKeys();
+				}
+			}
+
 			return resolvedConfiguration;
 		} catch (error) {
 			throw new Error(`Preload: unable to fetch vscode-window-config: ${error}`);

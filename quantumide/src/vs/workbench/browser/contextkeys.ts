@@ -18,6 +18,7 @@ import { IWorkingCopyService } from '../services/workingCopy/common/workingCopyS
 import { isNative } from '../../base/common/platform.js';
 import { WebFileSystemAccess } from '../../platform/files/browser/webFileSystemAccess.js';
 import { IProductService } from '../../platform/product/common/productService.js';
+import { isQuantumIDEProduct } from '../../platform/quantumide/common/quantumideChatPlatform.js';
 import { getTitleBarStyle } from '../../platform/window/common/window.js';
 import { mainWindow } from '../../base/browser/window.js';
 import { isFullscreen, onDidChangeFullscreen } from '../../base/browser/browser.js';
@@ -99,8 +100,10 @@ export class WorkbenchContextKeysHandler extends Disposable {
 		// Capabilities
 		HasWebFileSystemAccess.bindTo(this.contextKeyService).set(WebFileSystemAccess.supported(mainWindow));
 
-		// Development
-		const isDevelopment = !this.environmentService.isBuilt || this.environmentService.isExtensionDevelopment;
+		// Development (QuantumIDE production builds keep devtools keybindings/menu enabled for debugging)
+		const isDevelopment = !this.environmentService.isBuilt
+			|| this.environmentService.isExtensionDevelopment
+			|| isQuantumIDEProduct(this.productService.applicationName);
 		IsDevelopmentContext.bindTo(this.contextKeyService).set(isDevelopment);
 		setConstantContextKey(IsDevelopmentContext.key, isDevelopment);
 

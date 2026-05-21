@@ -67,4 +67,4 @@ Via `RootConfigChanged` in `agentHostChatContribution.ts`:
 - `openaiRawToolProgress.test.ts`
 - `agentHostChatContribution.test.ts` — OpenAI tool + failure paths
 
-See also: [quantumide-live-agent-activity-requirements.md](./quantumide-live-agent-activity-requirements.md)
+See also: [quantumide-live-agent-activity-requirements.md](./quantumide-live-agent-activity-requirements.md), [quantumide-agent-velocity.md](./quantumide-agent-velocity.md)

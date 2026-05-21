@@ -59,11 +59,18 @@ export function localizeAgentActivityProgressMessage(
 export function localizeAgentSessionActivity(activity: string): string {
 	const thinking = getAgentStatusActivityLabel('thinking');
 	const working = getAgentStatusActivityLabel('working');
+	const reasoning = getAgentStatusActivityLabel('reasoning');
 	if (activity === thinking) {
-		return localize('agentActivity.planning', "Planning…");
+		return localize('agentActivity.thinking', "Thinking…");
+	}
+	if (activity === reasoning) {
+		return localize('agentActivity.reasoning', "Reasoning…");
 	}
 	if (activity === working) {
 		return localize('agentActivity.working', "Working…");
+	}
+	if (activity.toLowerCase().includes('planning')) {
+		return localize('agentActivity.planning', "Planning…");
 	}
 	return activity;
 }

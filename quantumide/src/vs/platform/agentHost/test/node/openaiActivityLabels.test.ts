@@ -38,8 +38,16 @@ suite('openaiActivityLabels', () => {
 		assert.strictEqual(terminal.completedLabel, 'Ran command');
 	});
 
-	test('thinking status uses Planning label', () => {
-		assert.strictEqual(getAgentStatusActivityLabel('thinking'), 'Planning…');
+	test('session status labels are distinct', () => {
+		assert.strictEqual(getAgentStatusActivityLabel('thinking'), 'Thinking…');
+		assert.strictEqual(getAgentStatusActivityLabel('reasoning'), 'Reasoning…');
+		assert.strictEqual(getAgentStatusActivityLabel('working'), 'Working…');
+	});
+
+	test('quantumide chat tools map to activity kinds', () => {
+		assert.strictEqual(getAgentActivityLabel('quantumide_lsp_workspace_rename').kind, 'tool');
+		assert.strictEqual(getAgentActivityLabel('quantumide_run_terminal_command').kind, 'terminal');
+		assert.strictEqual(getAgentActivityLabel('quantumide_manipulate_editor').kind, 'edit');
 	});
 
 	test('resolveAgentActivityProgressMessage distinguishes running vs completed', () => {

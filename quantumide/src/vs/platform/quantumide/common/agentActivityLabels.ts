@@ -2,6 +2,8 @@
  *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+import { sanitizeActivityDetailText } from './agentActivityProgress.js';
+
 export type AgentActivityKind = 'search' | 'read' | 'edit' | 'terminal' | 'tool' | 'reasoning' | 'plan' | 'subagent' | 'status' | 'error';
 export type AgentActivityVerbosity = 'minimal' | 'normal' | 'verbose';
 export type AgentActivityPhase = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -45,8 +47,17 @@ export function parseAgentActivityToolArguments(toolInput: string | undefined): 
 	}
 }
 
-export function getAgentStatusActivityLabel(status: 'thinking' | 'working'): string {
-	return status === 'thinking' ? 'Planning…' : 'Working…';
+export type AgentSessionStatus = 'thinking' | 'working' | 'reasoning';
+
+export function getAgentStatusActivityLabel(status: AgentSessionStatus): string {
+	switch (status) {
+		case 'thinking':
+			return 'Thinking…';
+		case 'reasoning':
+			return 'Reasoning…';
+		case 'working':
+			return 'Working…';
+	}
 }
 
 /** Codicon id for chat tool invocation chrome (see `ThemeIcon.fromId`). */
@@ -129,6 +140,7 @@ export function formatSearchCompletedLabel(completedLabel: string, resultText?: 
 export function getAgentActivityKind(toolName: string): AgentActivityKind {
 	switch (toolName) {
 		case 'search_workspace_text':
+		case 'search_workspace_text_batch':
 		case 'grep':
 		case 'Grep':
 		case 'codebase_search':
@@ -139,7 +151,19 @@ export function getAgentActivityKind(toolName: string): AgentActivityKind {
 		case 'Read':
 			return 'read';
 		case 'list_workspace_symbols':
+		case 'search_semantic_workspace':
+		case 'search_vector_workspace':
+		case 'search_workspace_comments':
+		case 'search_workspace_diagnostics':
+		case 'search_external_retrieval':
+			return 'search';
+		case 'apply_workspace_patch':
+		case 'restore_workspace_checkpoint':
+		case 'search_workspace_symbols':
+		case 'find_symbol_references':
+		case 'resolve_import_dependencies':
 			return 'tool';
+		case 'apply_workspace_edits':
 		case 'propose_file_edit':
 		case 'write':
 		case 'Write':
@@ -147,6 +171,7 @@ export function getAgentActivityKind(toolName: string): AgentActivityKind {
 		case 'str_replace_editor':
 		case 'apply_patch':
 			return 'edit';
+		case 'run_workspace_check':
 		case 'propose_terminal_command':
 		case 'bash':
 		case 'shell':
@@ -155,7 +180,43 @@ export function getAgentActivityKind(toolName: string): AgentActivityKind {
 			return 'terminal';
 		case 'task':
 			return 'subagent';
+		case 'quantumide_lsp_workspace_rename':
+		case 'rename':
+			return 'tool';
+		case 'quantumide_run_terminal_command':
+		case 'quantumide_execute_workbench_command':
+			return 'terminal';
+		case 'quantumide_manipulate_editor':
+		case 'quantumide_edit_active_editor':
+		case 'quantumide_write_unsaved_buffer':
+		case 'quantumide_show_inline_suggestion':
+			return 'edit';
+		case 'quantumide_get_open_buffers':
+		case 'quantumide_read_unsaved_buffer':
+		case 'quantumide_get_editor_state':
+			return 'read';
+		case 'quantumide_manage_extension':
+		case 'quantumide_invoke_plugin':
+		case 'quantumide_update_setting':
+		case 'quantumide_run_lsp_action':
+		case 'quantumide_collab_sync':
+		case 'quantumide_agent_task':
+			return 'tool';
 		default:
+			if (toolName.startsWith('quantumide_')) {
+				if (toolName.includes('search') || toolName.includes('grep') || toolName.includes('index')) {
+					return 'search';
+				}
+				if (toolName.includes('read') || toolName.includes('buffer') || toolName.includes('open')) {
+					return 'read';
+				}
+				if (toolName.includes('edit') || toolName.includes('write') || toolName.includes('manipulate') || toolName.includes('diff')) {
+					return 'edit';
+				}
+				if (toolName.includes('terminal') || toolName.includes('command')) {
+					return 'terminal';
+				}
+			}
 			return 'tool';
 	}
 }
@@ -175,7 +236,7 @@ function buildActivityDetail(kind: AgentActivityKind, args: Record<string, unkno
 		case 'subagent':
 			return typeof args.description === 'string' ? args.description : undefined;
 		default:
-			return verbosity === 'verbose' ? JSON.stringify(args) : undefined;
+			return sanitizeActivityDetailText(verbosity === 'verbose' ? JSON.stringify(args) : undefined);
 	}
 }
 
@@ -189,11 +250,42 @@ function buildActivityMessage(
 	if (toolName === 'list_workspace_symbols') {
 		return buildListSymbolsMessage(args, verbosity, phase);
 	}
+	if (toolName === 'search_workspace_text_batch') {
+		const count = Array.isArray(args.queries) ? args.queries.length : 0;
+		const detail = count > 0 ? `${count} queries` : 'batch';
+		if (phase === 'running') {
+			return verbosity === 'minimal' ? 'Grepping' : `Grepping (${detail})`;
+		}
+		if (phase === 'failed') {
+			return 'Batch grep failed';
+		}
+		if (phase === 'cancelled') {
+			return 'Batch grep cancelled';
+		}
+		return verbosity === 'minimal' ? 'Grepped' : `Grepped (${detail})`;
+	}
+	if (toolName === 'run_workspace_check') {
+		const check = typeof args.check === 'string' ? args.check : 'check';
+		if (phase === 'running') {
+			return `Running ${check} check`;
+		}
+		if (phase === 'failed') {
+			return `${check} check failed`;
+		}
+		if (phase === 'cancelled') {
+			return `${check} check cancelled`;
+		}
+		return `${check} check passed`;
+	}
 	const path = getPathArg(args);
 	const query = getQueryArg(args);
 	const basename = path ? path.split(/[/\\]/).filter(Boolean).pop() ?? path : undefined;
-	const quotedPath = basename ? `\`${basename}\`${getLineRangeSuffix(args)}` : undefined;
-	const quotedQuery = query && verbosity === 'verbose' ? `\`${query}\`` : query;
+	const quotedPath = path
+		? (verbosity === 'verbose' ? `${path}${getLineRangeSuffix(args)}` : `\`${basename}\`${getLineRangeSuffix(args)}`)
+		: undefined;
+	const quotedQuery = query
+		? (verbosity === 'minimal' ? undefined : verbosity === 'verbose' ? query : `\`${query}\``)
+		: undefined;
 
 	switch (kind) {
 		case 'search':

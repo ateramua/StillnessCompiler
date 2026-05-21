@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import vfs from 'vinyl-fs';
@@ -228,6 +229,23 @@ function getElectron(arch: string): () => NodeJS.ReadWriteStream {
 	};
 }
 
+/** npm on PATH actually used for installs/extraction (may differ from npm_config_user_agent from a parent `npm run`). */
+function npmOnPathBreaksElectron(): boolean | undefined {
+	try {
+		const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+		const raw = execFileSync(npmCmd, ['-v'], { encoding: 'utf8', env: process.env }).trim();
+		const match = raw.match(/^(\d+)\.(\d+)\.(\d+)/);
+		if (!match) {
+			return undefined;
+		}
+		const major = parseInt(match[1], 10);
+		const minor = parseInt(match[2], 10);
+		return major > 11 || (major === 11 && minor >= 2);
+	} catch {
+		return undefined;
+	}
+}
+
 /** Same rule as build/npm/preinstall.ts — but `npm run electron` does not run preinstall, so we enforce here. */
 function assertNpmVersionForElectronDownload(): void {
 	const ua = process.env['npm_config_user_agent'] ?? '';
@@ -238,9 +256,14 @@ function assertNpmVersionForElectronDownload(): void {
 	const major = parseInt(m[1], 10);
 	const minor = parseInt(m[2], 10);
 	if (major > 11 || (major === 11 && minor >= 2)) {
+		const pathBreaks = npmOnPathBreaksElectron();
+		if (pathBreaks === false) {
+			return;
+		}
 		throw new Error(
 			`npm ${major}.${minor}.${m[3]} breaks Electron extraction in this repo (incomplete .app → dyld errors). ` +
-			`Use Node from .nvmrc with npm < 11.2, e.g.: ./scripts/ensure-node22.sh npm run electron (see build/npm/preinstall.ts).`
+			`Use Node from .nvmrc with npm < 11.2, e.g.: ./scripts/ensure-node22.sh npm run electron (see build/npm/preinstall.ts).` +
+			(pathBreaks === undefined ? ` Could not verify npm on PATH (\`npm -v\`).` : '')
 		);
 	}
 }

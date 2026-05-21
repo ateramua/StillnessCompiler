@@ -5,7 +5,7 @@
 **Version:** 1.0  
 **Last updated:** 2026-05-18  
 **Owner:** QuantumIDE AI / Agent Host  
-**Related work:** OpenAI response streaming (implemented); Copilot/Claude Agent Host protocol
+**Related work:** OpenAI response streaming (implemented); Copilot/Claude Agent Host protocol; [Agent Velocity](./quantumide-agent-velocity.md) (parallel/batch search, verify, rules, handoff)
 
 ---
 

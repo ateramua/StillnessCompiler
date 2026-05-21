@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import './media/quantumide-design-tokens.css';
 import './media/chatViewPane.css';
 import { $, addDisposableListener, append, EventHelper, EventType, getWindow, setVisibility } from '../../../../../../base/browser/dom.js';
 import { StandardMouseEvent } from '../../../../../../base/browser/mouseEvent.js';
@@ -68,6 +69,10 @@ import { IChatEntitlementService } from '../../../../../services/chat/common/cha
 import { toErrorMessage } from '../../../../../../base/common/errorMessage.js';
 import { IWorkbenchEnvironmentService } from '../../../../../services/environment/common/environmentService.js';
 import { IHostService } from '../../../../../services/host/browser/host.js';
+import product from '../../../../../../platform/product/common/product.js';
+import { isQuantumIDEProduct } from '../../../../../../platform/quantumide/common/quantumideChatPlatform.js';
+import { QuantumIDEAISettingId } from '../../../../../../platform/quantumide/common/quantumideAISettings.js';
+import { QuantumIDEChatParityDock } from './quantumideChatParityDock.js';
 
 interface IChatViewPaneState extends Partial<IChatModelInputState> {
 	/**
@@ -320,6 +325,7 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 	}
 
 	private createControls(parent: HTMLElement): void {
+		this._mountQuantumParityDockDeferred(parent);
 
 		// Sessions Control
 		const sessionsControl = this.createSessionsControl(parent);
@@ -335,6 +341,21 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
 
 		// Update sessions control visibility when all controls are created
 		this.updateSessionsControlVisibility();
+	}
+
+	/** Defer parity dock mount so opening a .code-workspace file can paint the shell first. */
+	private _mountQuantumParityDockDeferred(parent: HTMLElement): void {
+		const isQuantumIDE = isQuantumIDEProduct(product.applicationName)
+			|| product.nameShort === 'QuantumIDE';
+		if (!isQuantumIDE) {
+			return;
+		}
+		if (this.configurationService.getValue<boolean>(QuantumIDEAISettingId.ChatCursorParityEnabled) === false) {
+			return;
+		}
+		this._register(disposableTimeout(() => {
+			this._register(this.instantiationService.createInstance(QuantumIDEChatParityDock, parent));
+		}, 15_000));
 	}
 
 	//#region Sessions Control

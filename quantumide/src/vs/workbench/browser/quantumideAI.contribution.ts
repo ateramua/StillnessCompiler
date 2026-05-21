@@ -36,6 +36,13 @@ import { ITerminalService } from '../contrib/terminal/browser/terminal.js';
 import { IEditorService } from '../services/editor/common/editorService.js';
 import { IPreferencesService } from '../services/preferences/common/preferences.js';
 import { IQuantumIDEWorkspaceContextService } from '../services/quantumide/common/quantumideWorkspaceContext.js';
+import {
+	readAgentHandoffText,
+	setPinnedTaskSpecUri,
+} from '../services/quantumide/browser/quantumideAgentVelocityAttachments.js';
+import { IQuantumIDEInlineDiffService } from '../services/quantumide/browser/quantumideInlineDiffService.js';
+import { IQuantumIDEDiffReviewService } from '../services/quantumide/browser/quantumideDiffReviewService.js';
+import { openQuantumIDESettingsPanel } from './quantumideSettingsPanel.contribution.js';
 
 const OPEN_AGENT_SESSIONS_WELCOME_COMMAND_ID = 'workbench.action.openAgentSessionsWelcome';
 const OPEN_QUANTUMIDE_OPENAI_SESSION_COMMAND_ID = 'workbench.action.chat.openNewChatSessionInPlace.agent-host-openai';
@@ -114,6 +121,7 @@ const QUANTUMIDE_SETTINGS_QUERIES: Record<QuantumIDESettingsCategory, string> = 
 		QuantumIDEAISettingId.OpenAIStreamingCoalesceMs,
 		QuantumIDEAISettingId.OpenAIStreamingAdaptiveCoalescing,
 		QuantumIDEAISettingId.AgentShowActivitySteps,
+		QuantumIDEAISettingId.ChatAgentActivityEnabled,
 		QuantumIDEAISettingId.AgentActivityVerbosity,
 		QuantumIDEAISettingId.AgentMaxToolIterations,
 		QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn,
@@ -276,6 +284,12 @@ function registerQuantumIDEAIConfiguration(): void {
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: localize('quantumide.ai.agent.showActivitySteps', 'Shows live agent activity steps (search, read, tools) in chat while the OpenAI-compatible agent works. Set the QUANTUMIDE_AGENT_ACTIVITY environment variable to `0` to disable.'),
 			},
+			[QuantumIDEAISettingId.ChatAgentActivityEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.agentActivity.enabled', 'Shows Cursor-style in-chat activity messages (Planning, Grepping, Reading, etc.) during agent turns.'),
+			},
 			[QuantumIDEAISettingId.AgentActivityVerbosity]: {
 				type: 'string',
 				default: 'normal',
@@ -295,6 +309,20 @@ function registerQuantumIDEAIConfiguration(): void {
 				maximum: 32,
 				scope: ConfigurationScope.APPLICATION,
 				markdownDescription: localize('quantumide.ai.agent.maxToolIterations', 'Maximum number of tool-call rounds the OpenAI-compatible agent may run per user message before stopping.'),
+			},
+			[QuantumIDEAISettingId.AgentIterateUntilComplete]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.iterateUntilComplete', 'When enabled, the agent continues autonomously after tool rounds if verification failed or the execution graph has pending steps.'),
+			},
+			[QuantumIDEAISettingId.AgentIterateUntilCompleteMaxContinuations]: {
+				type: 'number',
+				default: 3,
+				minimum: 1,
+				maximum: 8,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.iterateUntilCompleteMaxContinuations', 'Maximum extra continuation rounds after the initial tool loop when iterate-until-complete is enabled.'),
 			},
 			[QuantumIDEAISettingId.AgentMaxActivityStepsPerTurn]: {
 				type: 'number',
@@ -363,6 +391,306 @@ function registerQuantumIDEAIConfiguration(): void {
 				scope: ConfigurationScope.RESOURCE,
 				markdownDescription: localize('quantumide.ai.semanticIndexing.enabled', 'Future-ready switch for semantic/vector indexing. The MVP keeps this disabled and uses local lexical/project-graph indexing only.'),
 			},
+			[QuantumIDEAISettingId.AgentVelocityProfile]: {
+				type: 'string',
+				default: 'dev',
+				enum: ['dev', 'ship'],
+				enumDescriptions: [
+					localize('quantumide.ai.agent.velocityProfile.dev', 'Fast exploration: batch search, parallel reads, compile checks after edits.'),
+					localize('quantumide.ai.agent.velocityProfile.ship', 'Review-ready output: smaller diffs, verify script before claiming done.'),
+				],
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.velocityProfile', 'Agent Velocity profile controls system guidance and default verification behavior for the OpenAI-compatible agent.'),
+			},
+			[QuantumIDEAISettingId.AgentVelocityAttachWorkspaceContext]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.velocity.attachWorkspaceContext', 'Attaches QuantumIDE workspace intelligence (graph, diagnostics, SCM) on every agent turn.'),
+			},
+			[QuantumIDEAISettingId.AgentVelocityAttachRules]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.velocity.attachRules', 'Attaches `AGENTS.md` and `.quantumide/rules/*.md` as context on every agent turn.'),
+			},
+			[QuantumIDEAISettingId.AgentVelocityParallelHostTools]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.agent.velocity.parallelHostTools', 'Runs consecutive read-only host tools (search, read, symbols) in parallel within a tool round.'),
+			},
+			[QuantumIDEAISettingId.AgentVelocityCrossRootSearch]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.velocity.crossRootSearch', 'When `.quantumide/workspace-links.json` is present, searches linked workspace roots in addition to the session working directory.'),
+			},
+			[QuantumIDEAISettingId.AgentVelocityHandoffEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.velocity.handoffEnabled', 'Writes `.quantumide/agent-handoff.md` after each completed turn and can resume from it via **QuantumIDE: Resume Agent Handoff**.'),
+			},
+			[QuantumIDEAISettingId.ChatSyncRealtime]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.syncRealtime', 'Keeps the chat context orchestrator synchronized with editor, diagnostics, terminal, and SCM changes without manual refresh.'),
+			},
+			[QuantumIDEAISettingId.WorkspaceAutoRestoreSession]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.WORKSPACE,
+				markdownDescription: localize('quantumide.workspace.autoRestoreSession', 'When enabled, QuantumIDE restores the last saved editor layout and open files from `.quantumide/workspace-state` after opening a workspace. Off by default to avoid freezing large workspaces on startup.'),
+			},
+			[QuantumIDEAISettingId.ChatDefaultMode]: {
+				type: 'string',
+				default: 'agent',
+				enum: ['ask', 'edit', 'agent', 'refactor', 'review', 'terminal', 'planning'],
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.defaultMode', 'Default chat mode when opening a new QuantumIDE chat session.'),
+			},
+			[QuantumIDEAISettingId.ChatInlineEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.inline.enabled', 'Enables inline editor AI commands (explain, optimize, rewrite, tests, docs).'),
+			},
+			[QuantumIDEAISettingId.ChatInlineGhostText]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.inline.ghostText', 'Shows a ghost-text preview of the first proposed hunk line while reviewing inline diffs.'),
+			},
+			[QuantumIDEAISettingId.ChatDiffPartialHunks]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.diff.partialHunks', 'When approving propose_file_edit, apply REPLACE/WITH patch hunks instead of replacing the entire file when markers are present.'),
+			},
+			[QuantumIDEAISettingId.ChatDiffSideBySide]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.diff.sideBySide', 'Prefer side-by-side diff presentation for AI-proposed edits when supported.'),
+			},
+			[QuantumIDEAISettingId.ChatCursorParityEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.cursorParity.enabled', 'Enables Cursor-style chat tools: direct editor edits, command palette, live preview, visual diff, and collaboration.'),
+			},
+			[QuantumIDEAISettingId.ChatCollabEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.collab.enabled', 'Enables shared collaboration sessions under .quantumide/collab/ in the workspace.'),
+			},
+			[QuantumIDEAISettingId.ChatCollabExperimental]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.collab.experimental', 'Enables experimental collaboration commands (local session export and optional WebSocket relay). No CRDT/OT shared editing.'),
+			},
+			[QuantumIDEAISettingId.CollabExperimentalAcknowledged]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.collab.experimentalAcknowledged', 'Set when you dismiss the one-time experimental collaboration notice.'),
+			},
+			[QuantumIDEAISettingId.ChatAttachmentsEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.attachments.enabled', 'Enables drag-and-drop and file attachments in the chat panel (uses built-in chat attachment UI).'),
+			},
+			[QuantumIDEAISettingId.ChatFeatureParityEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.chat.featureParity.enabled', 'Enables full Cursor chat parity: manifests, file tree, tests, search previews, onboarding, and chat-staged edits.'),
+			},
+			[QuantumIDEAISettingId.ChatTokenBudget]: {
+				type: 'number',
+				default: 14_000,
+				minimum: 2000,
+				maximum: 48_000,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.chat.tokenBudget', 'Maximum characters of automatic workspace context attached per agent turn.'),
+			},
+			[QuantumIDEAISettingId.AgentMaxEditScope]: {
+				type: 'number',
+				default: 40,
+				minimum: 1,
+				maximum: 200,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.agent.maxEditScope', 'Maximum number of file operations allowed in a single apply_workspace_edits call.'),
+			},
+			[QuantumIDEAISettingId.AgentRetryOnError]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.retryOnError', 'Allows the agent to retry failed verification steps when errors are recoverable.'),
+			},
+			[QuantumIDEAISettingId.AgentRefactorAutoVerify]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.refactorAutoVerify', 'Runs compile check automatically after successful refactor host tools (§2.9).'),
+			},
+			[QuantumIDEAISettingId.AgentPreferLspRename]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.preferLspRename', 'Prefer workspace LSP rename (client rename tool) over single-file rename_symbol for cross-file symbol changes.'),
+			},
+			[QuantumIDEAISettingId.AgentInstantPaletteCommands]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.instantPalette', 'Run safe command-palette actions (format, organize imports, tests, merge navigation) without per-tool user confirmation.'),
+			},
+			[QuantumIDEAISettingId.AgentEditorContextSnapshot]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.editorSnapshot', 'Persist live editor context to .quantumide/agent-context.json and inject into agent system prompts.'),
+			},
+			[QuantumIDEAISettingId.AgentTaskPhaseStatusEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.taskPhase.enabled', 'Show real-time agent task phase status in the editor status bar (Reading, Planning, Searching, etc.).'),
+			},
+			[QuantumIDEAISettingId.AgentTaskPhaseStatusDismissMs]: {
+				type: 'number',
+				default: 3000,
+				minimum: 500,
+				maximum: 30000,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.taskPhase.dismiss', 'Milliseconds before completed/error status clears from the status bar.'),
+			},
+			[QuantumIDEAISettingId.AgentTaskPhaseStatusLocation]: {
+				type: 'string',
+				default: 'statusBar',
+				enum: ['statusBar', 'hidden'],
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.taskPhase.location', 'Where to show agent task phase status (status bar or hidden).'),
+			},
+			[QuantumIDEAISettingId.AgentDangerousCommandBlock]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.agent.dangerousCommandBlock', 'Blocks obviously dangerous terminal command proposals (for example recursive delete and privilege escalation).'),
+			},
+			[QuantumIDEAISettingId.IndexingReindexOnDemand]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.reindexOnDemand', 'Allows manual workspace reindex commands from the command palette.'),
+			},
+			[QuantumIDEAISettingId.IndexingEmbeddingProvider]: {
+				type: 'string',
+				default: 'local',
+				enum: ['local', 'disabled', 'openai'],
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.indexing.embeddingProvider', 'Selects the embedding provider used when semantic indexing is enabled.'),
+			},
+			[QuantumIDEAISettingId.IndexingScaleProfile]: {
+				type: 'string',
+				default: 'standard',
+				enum: ['standard', 'enterprise'],
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.scaleProfile', 'Standard caps indexing at ~500 files. Enterprise raises limits (up to 50k files) and uses chunked background scanning.'),
+			},
+			[QuantumIDEAISettingId.IndexingVectorStore]: {
+				type: 'string',
+				default: 'incremental',
+				enum: ['json', 'incremental', 'lancedb'],
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.vectorStore', 'Vector index storage: monolithic JSON, chunked incremental store, or LanceDB (agent-host search when @lancedb/lancedb is installed).'),
+			},
+			[QuantumIDEAISettingId.PrivacyLocalIndexingOnly]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.privacy.localIndexingOnly', 'Keeps repository indexing local to the machine by default.'),
+			},
+			[QuantumIDEAISettingId.PrivacyTelemetryOptIn]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.privacy.telemetryOptIn', 'Opt-in flag for QuantumIDE-specific AI telemetry beyond core VS Code telemetry settings.'),
+			},
+			[QuantumIDEAISettingId.PrivacyEncryptIndexCache]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.privacy.encryptIndexCache', 'Encrypt `.quantumide` index cache files at rest on disk (§5.2).'),
+			},
+			[QuantumIDEAISettingId.PerformanceEnforceBudgets]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.performance.enforceBudgets', 'Throw errors when §6 performance budgets are exceeded instead of only logging warnings.'),
+			},
+			[QuantumIDEAISettingId.TerminalAutoApproveSafe]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.terminal.autoApproveSafe', 'Auto-approves a small set of read-only terminal commands when terminal confirmation is enabled.'),
+			},
+			[QuantumIDEAISettingId.ModelFallbackRoute]: {
+				type: 'string',
+				default: 'openai.gpt-4.1-mini',
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.modelRouter.fallbackRoute', 'Route ID used when the selected model is unavailable or task routing does not match.'),
+			},
+			[QuantumIDEAISettingId.ModelTaskRoutes]: {
+				type: 'object',
+				default: {
+					chat: 'openai.gpt-4.1',
+					agent: 'openai.gpt-4.1',
+					inline: 'openai.gpt-4.1-mini',
+					review: 'openai.gpt-4.1',
+					indexing: 'openai.gpt-4.1-mini',
+				},
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.ai.modelRouter.taskRoutes', 'Maps task kinds (chat, agent, inline, review, indexing) to model route IDs.'),
+			},
+			[QuantumIDEAISettingId.AgentAutoApplyThreshold]: {
+				type: 'number',
+				default: 0.85,
+				minimum: 0,
+				maximum: 1,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.autoApplyThreshold', 'Confidence threshold for auto-applying coordinated edits when auto-apply is enabled (0–1).'),
+			},
+			[QuantumIDEAISettingId.IndexingMaxCacheMb]: {
+				type: 'number',
+				default: 256,
+				minimum: 32,
+				maximum: 4096,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.maxCacheMb', 'Soft limit for combined `.quantumide` index cache size (MB). Reindex if exceeded.'),
+			},
+			[QuantumIDEAISettingId.IndexingMaxFiles]: {
+				type: 'number',
+				default: 500,
+				minimum: 50,
+				maximum: 50_000,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.maxFiles', 'Maximum source files scanned per index refresh (§2.3 scale control).'),
+			},
+			[QuantumIDEAISettingId.IndexingMaxFileChars]: {
+				type: 'number',
+				default: 48_000,
+				minimum: 4000,
+				maximum: 512_000,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.indexing.maxFileChars', 'Maximum characters read per file during indexing.'),
+			},
 		},
 	});
 }
@@ -377,11 +705,6 @@ async function openQuantumIDEOpenAIChat(accessor: ServicesAccessor): Promise<unk
 	} catch {
 		return openAgentSessions(accessor);
 	}
-}
-
-async function openQuantumIDESettings(accessor: ServicesAccessor, category: QuantumIDESettingsCategory = 'general'): Promise<void> {
-	const query = QUANTUMIDE_SETTINGS_QUERIES[category] ?? QUANTUMIDE_SETTINGS_QUERIES.general;
-	await accessor.get(IPreferencesService).openSettings({ jsonEditor: false, query });
 }
 
 async function openQuantumIDEModelsSettings(accessor: ServicesAccessor): Promise<void> {
@@ -796,27 +1119,31 @@ async function applyProposedSelectionEditFromClipboard(accessor: ServicesAccesso
 	}
 
 	const selectedText = model.getValueInRange(selection);
+	const inlineDiff = accessor.get(IQuantumIDEInlineDiffService);
+	inlineDiff.showProposal(model.uri, selection, selectedText, proposedText);
 	const confirmation = await accessor.get(IQuickInputService).pick([
 		{
-			id: 'apply',
-			label: localize('quantumide.ai.applySelection.apply', 'Apply Clipboard Text to Selection'),
-			detail: localize('quantumide.ai.applySelection.apply.detail', 'Replaces {0} selected characters with {1} clipboard characters.', selectedText.length, proposedText.length),
+			id: 'accept',
+			label: localize('quantumide.ai.applySelection.accept', 'Accept Inline Diff'),
+			detail: localize('quantumide.ai.applySelection.accept.detail', 'Apply the proposed replacement ({0} chars).', proposedText.length),
 		},
 		{
-			id: 'cancel',
-			label: localize('quantumide.ai.applySelection.cancel', 'Cancel'),
+			id: 'reject',
+			label: localize('quantumide.ai.applySelection.reject', 'Reject Inline Diff'),
 		},
 	], {
-		title: localize('quantumide.ai.applySelection.confirm.title', 'Confirm QuantumIDE AI Edit'),
-		placeHolder: localize('quantumide.ai.applySelection.confirm.placeholder', 'Review the selected text and clipboard proposal before applying.'),
+		title: localize('quantumide.ai.applySelection.confirm.title', 'Review Inline AI Diff'),
+		placeHolder: localize('quantumide.ai.applySelection.confirm.placeholder', 'Accept or reject the inline diff preview.'),
 	});
-	if (confirmation?.id !== 'apply') {
+	if (confirmation?.id === 'reject') {
+		inlineDiff.rejectProposal();
 		return;
 	}
-
-	editor.pushUndoStop();
-	const applied = editor.executeEdits(QuantumIDEAICommandId.ApplyProposedSelectionEdit, [{ range: selection, text: proposedText }]);
-	editor.pushUndoStop();
+	if (confirmation?.id !== 'accept') {
+		inlineDiff.rejectProposal();
+		return;
+	}
+	const applied = inlineDiff.acceptProposal();
 	if (applied) {
 		recordQuantumIDEAIAuditEvent(accessor, 'selection-edit-applied', 'Applied AI edit proposal from clipboard.', {
 			resource: model.uri.toString(),
@@ -843,13 +1170,12 @@ async function applyProposedFileEditsFromClipboard(accessor: ServicesAccessor): 
 		...edit,
 		resource: resolveWorkspaceFile(workspace.folders[0]?.uri, edit.path),
 	}));
-	const preview = await buildFileEditsPreview(fileService, resolved);
-	await accessor.get(IEditorService).openEditor({
-		resource: undefined,
-		contents: preview,
-		languageId: 'diff',
-		options: { pinned: true },
-	});
+	const workspaceRoot = workspace.folders[0]?.uri;
+	await accessor.get(IQuantumIDEDiffReviewService).openProposedFileEdits(
+		localize('quantumide.ai.applyFileEdits.multiDiffTitle', 'QuantumIDE Proposed File Edits'),
+		resolved.map(edit => ({ path: edit.path, content: edit.content })),
+		workspaceRoot,
+	);
 
 	const selected = await accessor.get(IQuickInputService).pick(resolved.map(edit => ({
 		id: edit.resource.toString(),
@@ -983,28 +1309,6 @@ function resolveWorkspaceFile(root: URI | undefined, path: string): URI {
 	return root ? joinPath(root, path) : URI.file(path);
 }
 
-async function buildFileEditsPreview(fileService: IFileService, edits: readonly (IQuantumIDEAIFileEditProposal & { resource: URI })[]): Promise<string> {
-	const sections = ['QuantumIDE AI proposed file edits', 'Review this preview before applying selected files.', ''];
-	for (const edit of edits) {
-		let original = '';
-		try {
-			original = (await fileService.readFile(edit.resource)).value.toString();
-		} catch {
-			original = '[new file or unreadable original]';
-		}
-		sections.push(
-			`--- ${edit.path}`,
-			`+++ ${edit.path}`,
-			'@@ Original',
-			original.slice(0, MAX_DIFF_CHARS_PER_FILE),
-			'@@ Proposed',
-			edit.content.slice(0, MAX_DIFF_CHARS_PER_FILE),
-			'',
-		);
-	}
-	return sections.join('\n');
-}
-
 async function buildAskWorkspacePrompt(accessor: ServicesAccessor): Promise<string> {
 	const config = accessor.get(IConfigurationService);
 	const maxContextFiles = config.getValue<number>(QuantumIDEAISettingId.AgentMaxContextFiles);
@@ -1072,7 +1376,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'general');
+			return openQuantumIDESettingsPanel(accessor, 'general');
 		}
 	});
 
@@ -1087,7 +1391,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'ai');
+			return openQuantumIDESettingsPanel(accessor, 'models');
 		}
 	});
 
@@ -1102,7 +1406,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'ai');
+			return openQuantumIDESettingsPanel(accessor, 'models');
 		}
 	});
 
@@ -1132,7 +1436,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'workspace');
+			return openQuantumIDESettingsPanel(accessor, 'workspace');
 		}
 	});
 
@@ -1147,7 +1451,7 @@ function registerQuantumIDEAICommands(): void {
 			});
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
-			return openQuantumIDESettings(accessor, 'security');
+			return openQuantumIDESettingsPanel(accessor, 'security');
 		}
 	});
 
@@ -1309,6 +1613,56 @@ function registerQuantumIDEAICommands(): void {
 		}
 		run(accessor: ServicesAccessor): Promise<void> {
 			return refreshWorkspaceAIIndex(accessor);
+		}
+	});
+
+	registerAction2(class QuantumIDEPinAgentTaskSpecAction extends Action2 {
+		constructor() {
+			super({
+				id: QuantumIDEAICommandId.PinAgentTaskSpec,
+				title: localize2('quantumide.ai.pinTaskSpec', 'QuantumIDE: Pin Active File as Agent Task Spec'),
+				category: localize2('quantumide.ai.category', 'QuantumIDE AI'),
+			});
+		}
+		run(accessor: ServicesAccessor): void {
+			const editorService = accessor.get(IEditorService);
+			const storageService = accessor.get(IStorageService);
+			const notificationService = accessor.get(INotificationService);
+			const resource = editorService.activeEditor?.resource;
+			if (!resource) {
+				notificationService.warn(localize('quantumide.ai.pinTaskSpec.noEditor', 'Open a file to pin as the agent task spec.'));
+				return;
+			}
+			setPinnedTaskSpecUri(storageService, StorageScope.WORKSPACE, resource, StorageTarget.MACHINE);
+			notificationService.info(localize('quantumide.ai.pinTaskSpec.done', 'Pinned {0} as the agent task spec for this workspace.', resource.fsPath));
+		}
+	});
+
+	registerAction2(class QuantumIDEResumeAgentHandoffAction extends Action2 {
+		constructor() {
+			super({
+				id: QuantumIDEAICommandId.ResumeAgentHandoff,
+				title: localize2('quantumide.ai.resumeHandoff', 'QuantumIDE: Resume Agent Handoff'),
+				category: localize2('quantumide.ai.category', 'QuantumIDE AI'),
+			});
+		}
+		async run(accessor: ServicesAccessor): Promise<void> {
+			const fileService = accessor.get(IFileService);
+			const workspaceContextService = accessor.get(IWorkspaceContextService);
+			const notificationService = accessor.get(INotificationService);
+			const workspaceFolder = workspaceContextService.getWorkspace().folders[0]?.uri;
+			const handoffText = await readAgentHandoffText(fileService, workspaceFolder);
+			if (!handoffText) {
+				notificationService.warn(localize('quantumide.ai.resumeHandoff.missing', 'No `.quantumide/agent-handoff.md` found in the workspace.'));
+				return;
+			}
+			openQuickChatWithPrompt(accessor, [
+				'Continue the previous agent task using this handoff:',
+				'',
+				handoffText,
+				'',
+				'Pick up where the last turn left off without re-asking for context already covered.',
+			].join('\n'));
 		}
 	});
 
@@ -1487,6 +1841,18 @@ function registerQuantumIDEAIMenus(): void {
 			title: localize({ key: 'quantumide.miRefreshWorkspaceAIIndex', comment: ['&& denotes a mnemonic'] }, 'Refresh Workspace AI &&Index'),
 		},
 		order: 28,
+	});
+	MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
+		command: {
+			id: QuantumIDEAICommandId.PinAgentTaskSpec,
+			title: localize('quantumide.miPinAgentTaskSpec', 'Pin Active File as Agent Task Spec'),
+		},
+	});
+	MenuRegistry.appendMenuItem(MenuId.CommandPalette, {
+		command: {
+			id: QuantumIDEAICommandId.ResumeAgentHandoff,
+			title: localize('quantumide.miResumeAgentHandoff', 'Resume Agent Handoff'),
+		},
 	});
 }
 

@@ -1246,11 +1246,13 @@ suite('AgentHostChatContribution', () => {
 			});
 
 			fire({ type: 'session/activityChanged', session, activity: 'Planning…' } as SessionAction);
+			fire({ type: 'session/delta', session, turnId, partId: 'p1', content: 'Hello' } as SessionAction);
 			fire({ type: 'session/turnComplete', session, turnId } as SessionAction);
 			await turnPromise;
 
 			const progressMessages = collected.flat().filter(p => p.kind === 'progressMessage');
 			assert.ok(progressMessages.length >= 1, 'SessionActivityChanged should surface as progressMessage');
+			assert.strictEqual(progressMessages[0]?.sticky, true, 'agent activity progress should stay visible during streamed answer text');
 		}));
 
 		test('OpenAI provider routes tool activity to toolInvocation progress', () => runWithFakedTimers({ useFakeTimers: true }, async () => {

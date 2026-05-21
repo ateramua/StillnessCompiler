@@ -54,3 +54,39 @@ export function sanitizeQuantumIDEModelRoutes(routes: unknown, fallback: readonl
 export function enabledQuantumIDEModelRoutes(routes: unknown, provider?: string): IQuantumIDEModelRoute[] {
 	return sanitizeQuantumIDEModelRoutes(routes).filter(route => route.enabled !== false && (!provider || route.provider === provider));
 }
+
+export type QuantumIDEModelTaskKind = 'chat' | 'agent' | 'inline' | 'review' | 'indexing';
+
+export function resolveQuantumIDEModelRoute(
+	routes: unknown,
+	options: {
+		readonly preferredRouteId?: string;
+		readonly task?: QuantumIDEModelTaskKind | string;
+		readonly taskRoutes?: Record<string, string>;
+		readonly fallbackRouteId?: string;
+	},
+): IQuantumIDEModelRoute | undefined {
+	const enabled = enabledQuantumIDEModelRoutes(routes);
+	if (enabled.length === 0) {
+		return undefined;
+	}
+	const byId = (id: string | undefined) => id ? enabled.find(r => r.id === id) : undefined;
+	if (options.task && options.taskRoutes) {
+		const taskRouteId = options.taskRoutes[options.task];
+		const taskRoute = byId(taskRouteId);
+		if (taskRoute) {
+			return taskRoute;
+		}
+	}
+	if (options.preferredRouteId) {
+		const preferred = byId(options.preferredRouteId);
+		if (preferred) {
+			return preferred;
+		}
+	}
+	const fallback = byId(options.fallbackRouteId);
+	if (fallback) {
+		return fallback;
+	}
+	return enabled[0];
+}

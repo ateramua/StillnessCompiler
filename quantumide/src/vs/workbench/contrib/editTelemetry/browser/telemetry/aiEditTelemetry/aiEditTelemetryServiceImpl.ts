@@ -7,6 +7,7 @@ import { EditSuggestionId } from '../../../../../../editor/common/textModelEditS
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { escapeModelIdForTelemetry, ITelemetryService } from '../../../../../../platform/telemetry/common/telemetry.js';
 import { DataChannelForwardingTelemetryService, forwardToChannelIf, isCopilotLikeExtension } from '../../../../../../platform/dataChannel/browser/forwardingTelemetryService.js';
+import { type ChatRequestModeId } from '../../../../chat/common/constants.js';
 import { IAiEditTelemetryService, IEditTelemetryCodeAcceptedData, IEditTelemetryCodeRejectedData, IEditTelemetryCodeSuggestedData } from './aiEditTelemetryService.js';
 import { IRandomService } from '../../randomService.js';
 
@@ -41,7 +42,7 @@ export class AiEditTelemetryServiceImpl implements IAiEditTelemetryService {
 			editLinesInserted: number | undefined;
 			editLinesDeleted: number | undefined;
 
-			modeId: 'ask' | 'edit' | 'agent' | 'custom' | 'applyCodeBlock' | undefined;
+			modeId: ChatRequestModeId;
 			modelId: string | undefined;
 			applyCodeBlockSuggestionId: string | undefined;
 			sourceRequestId: string | undefined;
@@ -115,7 +116,7 @@ export class AiEditTelemetryServiceImpl implements IAiEditTelemetryService {
 			editLinesInserted: number | undefined;
 			editLinesDeleted: number | undefined;
 
-			modeId: 'ask' | 'edit' | 'agent' | 'custom' | 'applyCodeBlock' | undefined;
+			modeId: ChatRequestModeId;
 			modelId: string | undefined;
 			applyCodeBlockSuggestionId: string | undefined;
 			sourceRequestId: string | undefined;
@@ -197,7 +198,7 @@ export class AiEditTelemetryServiceImpl implements IAiEditTelemetryService {
 			editLinesInserted: number | undefined;
 			editLinesDeleted: number | undefined;
 
-			modeId: 'ask' | 'edit' | 'agent' | 'custom' | 'applyCodeBlock' | undefined;
+			modeId: ChatRequestModeId;
 			modelId: string | undefined;
 			applyCodeBlockSuggestionId: string | undefined;
 			sourceRequestId: string | undefined;

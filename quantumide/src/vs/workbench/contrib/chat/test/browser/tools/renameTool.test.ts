@@ -5,6 +5,7 @@
 
 import assert from 'assert';
 import { CancellationToken } from '../../../../../../base/common/cancellation.js';
+import { Event } from '../../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import { Range } from '../../../../../../editor/common/core/range.js';
@@ -19,6 +20,8 @@ import { RenameTool } from '../../../browser/tools/renameTool.js';
 import { IChatService } from '../../../common/chatService/chatService.js';
 import { IToolInvocation, IToolResult, IToolResultTextPart, ToolProgress } from '../../../common/tools/languageModelToolsService.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
+import { IQuantumIDEChatEditSessionService } from '../../../../../services/quantumide/browser/quantumideChatEditSessionService.js';
+import { IQuantumIDEDiffReviewService } from '../../../../../services/quantumide/browser/quantumideDiffReviewService.js';
 
 function getTextContent(result: IToolResult): string {
 	const part = result.content.find((p): p is IToolResultTextPart => p.kind === 'text');
@@ -93,6 +96,32 @@ suite('RenameTool', () => {
 		} as unknown as IBulkEditService & { appliedEdits: WorkspaceEdit[] };
 	}
 
+	function createMockChatEditSessionService(): IQuantumIDEChatEditSessionService {
+		return {
+			_serviceBrand: undefined,
+			onDidChange: Event.None,
+			stageFromProposedEdits: async () => { },
+			acceptAll: async () => ({ applied: 0, errors: [] }),
+			acceptBatch: async () => 0,
+			rejectBatch: () => { },
+			acceptEditById: async () => false,
+			rejectEditById: () => { },
+			getBatchIds: () => [],
+			getPendingEditsForBatch: () => [],
+			rejectAll: () => { },
+			rollbackLastBatch: async () => false,
+			getPendingCount: () => 0,
+		} as unknown as IQuantumIDEChatEditSessionService;
+	}
+
+	function createMockDiffReviewService(): IQuantumIDEDiffReviewService {
+		return {
+			_serviceBrand: undefined,
+			openMultiDiffReview: async () => { },
+			openProposedFileEdits: async () => { },
+		};
+	}
+
 	function createInvocation(parameters: Record<string, unknown>): IToolInvocation {
 		return { parameters } as unknown as IToolInvocation;
 	}
@@ -107,6 +136,8 @@ suite('RenameTool', () => {
 			createMockWorkspaceService(),
 			createMockChatService(),
 			options?.bulkEditService ?? createMockBulkEditService(),
+			createMockChatEditSessionService(),
+			createMockDiffReviewService(),
 		);
 	}
 
@@ -177,7 +208,7 @@ suite('RenameTool', () => {
 			const tool = disposables.add(createTool(createMockTextModelService(model)));
 			// No rename provider registered
 			const result = await tool.invoke(
-				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }' }),
+				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }', previewOnly: false }),
 				noopCountTokens, noopProgress, CancellationToken.None
 			);
 			assert.ok(getTextContent(result).includes('No rename provider'));
@@ -220,7 +251,7 @@ suite('RenameTool', () => {
 			disposables.add(langFeatures.renameProvider.register('typescript', provider));
 			const tool = disposables.add(createTool(createMockTextModelService(model)));
 			const result = await tool.invoke(
-				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }' }),
+				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }', previewOnly: false }),
 				noopCountTokens, noopProgress, CancellationToken.None
 			);
 			assert.ok(getTextContent(result).includes('Rename rejected'));
@@ -308,7 +339,7 @@ suite('RenameTool', () => {
 
 			const tool = disposables.add(createTool(createMockTextModelService(model)));
 			const result = await tool.invoke(
-				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', filePath: 'src/file.ts', lineContent: 'import { MyClass }' }),
+				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', filePath: 'src/file.ts', lineContent: 'import { MyClass }', previewOnly: false }),
 				noopCountTokens, noopProgress, CancellationToken.None
 			);
 
@@ -327,7 +358,7 @@ suite('RenameTool', () => {
 
 			const tool = disposables.add(createTool(createMockTextModelService(model)));
 			const result = await tool.invoke(
-				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }' }),
+				createInvocation({ symbol: 'MyClass', newName: 'MyNewClass', uri: testUri.toString(), lineContent: 'import { MyClass }', previewOnly: false }),
 				noopCountTokens, noopProgress, CancellationToken.None
 			);
 

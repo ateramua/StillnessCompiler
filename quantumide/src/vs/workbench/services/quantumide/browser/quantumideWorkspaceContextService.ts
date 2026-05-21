@@ -80,9 +80,12 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => this._refreshScheduler.schedule()));
 		this._register(this._fileService.onDidFilesChange(() => this._refreshScheduler.schedule()));
 		this._register(this._workspaceTrustManagementService.onDidChangeTrust(() => this._refreshScheduler.schedule()));
-		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true) {
-			this._refreshScheduler.schedule(1_000);
-		}
+		// Defer first scan so opening a .code-workspace file can render the shell before indexing.
+		this._register(new RunOnceScheduler(() => {
+			if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true) {
+				this._refreshScheduler.schedule();
+			}
+		}, 8_000)).schedule();
 	}
 
 	getWorkspaceGraph(): IQuantumIDEWorkspaceGraph | undefined {

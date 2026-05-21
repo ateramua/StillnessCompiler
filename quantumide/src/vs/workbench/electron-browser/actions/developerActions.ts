@@ -11,11 +11,12 @@ import { Categories } from '../../../platform/action/common/actionCommonCategori
 import { ServicesAccessor } from '../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchEnvironmentService } from '../../services/environment/common/environmentService.js';
 import { KeybindingWeight } from '../../../platform/keybinding/common/keybindingsRegistry.js';
-import { IsDevelopmentContext } from '../../../platform/contextkey/common/contextkeys.js';
 import { KeyCode, KeyMod } from '../../../base/common/keyCodes.js';
 import { INativeWorkbenchEnvironmentService } from '../../services/environment/electron-browser/environmentService.js';
 import { URI } from '../../../base/common/uri.js';
 import { getActiveWindow } from '../../../base/browser/dom.js';
+import { IProductService } from '../../../platform/product/common/productService.js';
+import { isQuantumIDEProduct } from '../../../platform/quantumide/common/quantumideChatPlatform.js';
 import { IProgressService, ProgressLocation } from '../../../platform/progress/common/progress.js';
 import { IDialogService } from '../../../platform/dialogs/common/dialogs.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../services/statusbar/browser/statusbar.js';
@@ -30,7 +31,6 @@ export class ToggleDevToolsAction extends Action2 {
 			f1: true,
 			keybinding: {
 				weight: KeybindingWeight.WorkbenchContrib + 50,
-				when: IsDevelopmentContext,
 				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyI,
 				mac: { primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI }
 			},
@@ -44,7 +44,11 @@ export class ToggleDevToolsAction extends Action2 {
 
 	async run(accessor: ServicesAccessor): Promise<void> {
 		const nativeHostService = accessor.get(INativeHostService);
-
+		const productService = accessor.get(IProductService);
+		// QuantumIDE: use the window-scoped native host (IPC). Avoid getActiveWindow() when the UI thread is wedged.
+		if (isQuantumIDEProduct(productService.applicationName) || productService.nameShort === 'QuantumIDE') {
+			return nativeHostService.toggleDevTools();
+		}
 		return nativeHostService.toggleDevTools({ targetWindowId: getActiveWindow().vscodeWindowId });
 	}
 }

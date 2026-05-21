@@ -499,13 +499,15 @@
 	const { result, configuration } = await load<IDesktopMain, INativeWindowConfiguration>(
 		{
 			configureDeveloperSettings: function (windowConfig) {
+				const isExtensionDev = Array.isArray(windowConfig.extensionDevelopmentPath) && windowConfig.extensionDevelopmentPath.length > 0;
+				const isExtensionTest = typeof windowConfig.extensionTestsPath === 'string' || windowConfig['enable-smoke-test-driver'] === true;
 				return {
 					// disable automated devtools opening on error when running extension tests
 					// as this can lead to nondeterministic test execution (devtools steals focus)
-					forceDisableShowDevtoolsOnError: typeof windowConfig.extensionTestsPath === 'string' || windowConfig['enable-smoke-test-driver'] === true,
-					// enable devtools keybindings in extension development window
-					forceEnableDeveloperKeybindings: Array.isArray(windowConfig.extensionDevelopmentPath) && windowConfig.extensionDevelopmentPath.length > 0,
-					removeDeveloperKeybindingsAfterLoad: true
+					forceDisableShowDevtoolsOnError: isExtensionTest,
+					// QuantumIDE fork: always keep preload DevTools shortcuts (F12, Cmd-Alt-I / Ctrl-Shift-I → IPC)
+					forceEnableDeveloperKeybindings: true,
+					removeDeveloperKeybindingsAfterLoad: false
 				};
 			},
 			beforeImport: function (windowConfig) {
