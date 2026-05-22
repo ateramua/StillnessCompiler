@@ -5,7 +5,7 @@
 import { spawn } from 'child_process';
 import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
-import type { IFileService } from '../../../files/common/files.js';
+import type { IFileContent, IFileService, IFileStat, IFileStatWithPartialMetadata } from '../../../files/common/files.js';
 import {
 	isReadOnlyOpenAIHostTool,
 	QUANTUMIDE_WORKSPACE_LINKS_FILE,
@@ -26,9 +26,14 @@ import {
 } from '../../../quantumide/common/quantumideWorkspaceIgnore.js';
 import { loadQuantumIDEWorkspaceIgnorePolicy } from '../../../quantumide/common/quantumideWorkspaceIgnoreLoader.js';
 import { formatQuantumIDEWorkspaceDiscoveryLog } from '../../../quantumide/common/quantumideWorkspaceDiscoveryLog.js';
-import { searchQuantumIDEWorkspaceTextWithRipgrep } from '../quantumideWorkspaceTextSearch.js';
+import { searchQuantumIDEWorkspaceTextWithRipgrepPooled } from '../quantumideRipgrepPool.js';
+import {
+	quantumIDEWorkspaceTextSearchPolicyKey,
+	resolveQuantumIDEWorkspaceTextSearch,
+} from '../../../quantumide/common/quantumideWorkspaceTextSearchQueryCache.js';
 import {
 	assertQuantumIDEWorkspaceWritableForTool,
+	tryRejectQuantumIDEReadonlyWriteTool,
 	isQuantumIDEWorkspaceFileMutatingHostTool,
 } from '../../../quantumide/common/quantumideWorkspaceReadonly.js';
 import { recordQuantumIDESemanticSearchLatency } from '../../../quantumide/common/quantumideWorkspaceDiscoveryTelemetry.js';
@@ -104,6 +109,26 @@ import {
 	QuantumIDEWorkspaceIndexExcludeNames,
 } from '../../../quantumide/common/quantumideWorkspaceGraph.js';
 import {
+	buildQuantumIDEWorkspaceGraphStructureIndexFromSnapshot,
+	parseQuantumIDEStructureIndexSnapshot,
+	QUANTUMIDE_STRUCTURE_INDEX_FILE,
+	type IQuantumIDEWorkspaceGraphStructureIndex,
+} from '../../../quantumide/common/quantumideWorkspaceGraphStructureIndex.js';
+import type { IQuantumIDEWorkspaceAgentSnapshot } from '../../../quantumide/common/quantumideWorkspaceSnapshotBridge.js';
+import {
+	QuantumIDEWorkspaceFastPath,
+	normalizeQuantumIDEWorkspaceFastPath,
+} from '../../../quantumide/common/quantumideWorkspaceFastPath.js';
+import type { QuantumIDEAgentContextTracker } from '../../../quantumide/common/quantumideAgentContextTracker.js';
+import { recordQuantumIDEPerfHistogramSample } from '../../../quantumide/common/quantumidePerfHistogram.js';
+import {
+	formatListWorkspaceDirectoryIndexResponse,
+	listWorkspaceDirectoryFromStructureIndex,
+} from '../../../quantumide/common/quantumideListWorkspaceDirectoryIndex.js';
+import type { IQuantumIDEHostAgentRoundFileCache } from '../../../quantumide/common/quantumideHostAgentRoundFileCache.js';
+import { applyQuantumIDEHostToolPayloadCap } from '../../../quantumide/common/quantumideHostToolPayload.js';
+import { recordQuantumIDEFastPathHit, recordQuantumIDEFastPathMiss, recordQuantumIDERgFallback } from '../../../quantumide/common/quantumidePerfTelemetry.js';
+import {
 	formatProjectManifestSummaries,
 	parseProjectManifestSummary,
 } from '../../../quantumide/common/quantumideProjectManifest.js';
@@ -115,6 +140,14 @@ import type { IOpenAIToolDefinition } from './openAiClient.js';
 import { executeQuantumIDEHostWorkflowTool, QUANTUMIDE_HOST_WORKFLOW_TOOLS } from './quantumideHostWorkflowTools.js';
 import { appendDeferredVerification } from '../../../quantumide/common/quantumideDeferredVerificationStore.js';
 import { getIndexingGateMessage } from '../../../quantumide/common/quantumideIndexingStatusStore.js';
+import {
+	formatQuantumIDELitePipelineSemanticToolBlocked,
+	isQuantumIDEHostToolAllowedForPipeline,
+} from '../../../quantumide/common/quantumideAgentPipeline.js';
+import {
+	recordQuantumIDELitePipelineSemanticToolBlock,
+	recordQuantumIDESemanticWorkspaceToolInvocation,
+} from '../../../quantumide/common/quantumideAgentPipelineTelemetry.js';
 import {
 	formatBatchApplySummary,
 	isDocumentationPath,
@@ -149,6 +182,18 @@ export interface IOpenAIHostToolContext {
 	readonly semanticIndexingEnabled?: boolean;
 	/** SEC-05: VS Code / provider read-only workspace — discovery reads OK, file writes blocked. */
 	readonly workspaceReadonly?: boolean;
+	/** BC-02: per agent-round IFileService stat/read/resolve dedupe (AC-02-03). */
+	readonly agentRoundFileCache?: IQuantumIDEHostAgentRoundFileCache;
+	/** PF-03: lite | standard | full — gates index-backed tools (AC-03-02). */
+	readonly agentPipeline?: import('../../../quantumide/common/quantumideAgentPipeline.js').QuantumIDEAgentPipeline;
+	/** Req-07: in-memory workspace snapshot (avoids per-tool structure-index disk read). */
+	readonly workspaceSnapshot?: IQuantumIDEWorkspaceAgentSnapshot;
+	/** Req-02: warmed fast-path layer for exists/stat without IFileService. */
+	readonly workspaceFastPath?: QuantumIDEWorkspaceFastPath;
+	/** Req-04: session context delta tracker. */
+	readonly contextTracker?: QuantumIDEAgentContextTracker;
+	/** Req-08: emit partial tool progress to UI. */
+	readonly onToolProgress?: (detail: string) => void;
 }
 
 export const OPENAI_HOST_ACTIVITY_TOOLS: readonly IOpenAIToolDefinition[] = [
@@ -807,6 +852,52 @@ const MAX_VERIFY_OUTPUT_CHARS = 24_000;
 const VERIFY_TIMEOUT_MS = 180_000;
 
 const hostIgnorePolicyCache = new Map<string, IQuantumIDEWorkspaceIgnorePolicy>();
+const hostStructureIndexCache = new Map<string, IQuantumIDEWorkspaceGraphStructureIndex>();
+
+async function getHostStructureIndex(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	context: IOpenAIHostToolContext,
+): Promise<IQuantumIDEWorkspaceGraphStructureIndex | undefined> {
+	if (context.indexingEnabled === false) {
+		return undefined;
+	}
+	const snapshot = context.workspaceSnapshot?.structureIndex;
+	if (snapshot?.paths?.length) {
+		const index = buildQuantumIDEWorkspaceGraphStructureIndexFromSnapshot(snapshot);
+		recordQuantumIDEFastPathHit();
+		return index;
+	}
+	const links = context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []);
+	const roots = collectAgentSearchRoots(workingDirectory, links);
+	const key = roots.map(r => r.fsPath).join('|') || 'none';
+	let index = hostStructureIndexCache.get(key);
+	if (index) {
+		recordQuantumIDEFastPathHit();
+		return index;
+	}
+	if (!workingDirectory) {
+		return undefined;
+	}
+	try {
+		const raw = (await fileService.readFile(joinPath(workingDirectory, QUANTUMIDE_STRUCTURE_INDEX_FILE))).value.toString();
+		const snapshot = parseQuantumIDEStructureIndexSnapshot(raw);
+		if (!snapshot || snapshot.paths.length === 0) {
+			return undefined;
+		}
+		index = buildQuantumIDEWorkspaceGraphStructureIndexFromSnapshot(snapshot);
+		hostStructureIndexCache.set(key, index);
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-search',
+			operation: 'structure-index-load',
+			fileCount: index.fileCount,
+			matchCount: index.directoryCount,
+		}));
+		return index;
+	} catch {
+		return undefined;
+	}
+}
 
 async function getHostIgnorePolicy(
 	fileService: IFileService,
@@ -833,6 +924,22 @@ async function resolveWorkspacePathForHost(
 	context: IOpenAIHostToolContext,
 	mode: 'read' | 'list',
 ): Promise<URI> {
+	const cacheKey = `host-path:${mode}:${pathArg}:${workingDirectory?.toString() ?? ''}`;
+	const cache = context.agentRoundFileCache;
+	if (cache) {
+		return cache.coalesce(cacheKey, 'other', () =>
+			resolveWorkspacePathForHostUncached(fileService, workingDirectory, pathArg, context, mode));
+	}
+	return resolveWorkspacePathForHostUncached(fileService, workingDirectory, pathArg, context, mode);
+}
+
+async function resolveWorkspacePathForHostUncached(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	pathArg: string,
+	context: IOpenAIHostToolContext,
+	mode: 'read' | 'list',
+): Promise<URI> {
 	const links = context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []);
 	const resource = resolveWorkspacePath(workingDirectory, pathArg, { ...context, workspaceLinks: links });
 	const roots = collectAgentSearchRoots(workingDirectory, links);
@@ -849,6 +956,63 @@ async function resolveWorkspacePathForHost(
 	return resource;
 }
 
+async function hostCoalescedStat(
+	fileService: IFileService,
+	resource: URI,
+	relPath: string | undefined,
+	context: IOpenAIHostToolContext,
+): Promise<IFileStatWithPartialMetadata> {
+	if (relPath && context.workspaceFastPath?.isEnabled()) {
+		const fp = context.workspaceFastPath.stat(relPath);
+		if (fp.hit && fp.exists) {
+			return {
+				resource,
+				name: relPath.split('/').pop() ?? relPath,
+				isFile: fp.isFile ?? true,
+				isDirectory: fp.isDirectory ?? false,
+				isSymbolicLink: false,
+				readonly: false,
+				locked: false,
+				executable: false,
+				mtime: Date.now(),
+				ctime: Date.now(),
+				size: fp.size ?? 0,
+				etag: '',
+			};
+		}
+	}
+	if (context.agentRoundFileCache) {
+		return context.agentRoundFileCache.coalescedStat(fileService, resource);
+	}
+	recordQuantumIDEFastPathMiss();
+	return fileService.stat(resource);
+}
+
+async function hostCoalescedReadFile(
+	fileService: IFileService,
+	resource: URI,
+	context: IOpenAIHostToolContext,
+	options?: { length?: number },
+): Promise<IFileContent> {
+	if (context.agentRoundFileCache) {
+		return context.agentRoundFileCache.coalescedReadFile(fileService, resource, options);
+	}
+	recordQuantumIDEFastPathMiss();
+	return fileService.readFile(resource, options);
+}
+
+async function hostCoalescedResolve(
+	fileService: IFileService,
+	resource: URI,
+	context: IOpenAIHostToolContext,
+): Promise<IFileStat> {
+	if (context.agentRoundFileCache) {
+		return context.agentRoundFileCache.coalescedResolve(fileService, resource);
+	}
+	recordQuantumIDEFastPathMiss();
+	return fileService.resolve(resource);
+}
+
 export async function executeOpenAIHostTool(
 	fileService: IFileService,
 	workingDirectory: URI | undefined,
@@ -856,6 +1020,25 @@ export async function executeOpenAIHostTool(
 	args: Record<string, unknown>,
 	context: IOpenAIHostToolContext = {},
 ): Promise<string> {
+	return applyQuantumIDEHostToolPayloadCap(
+		await executeOpenAIHostToolUncapped(fileService, workingDirectory, toolName, args, context),
+		toolName,
+	);
+}
+
+async function executeOpenAIHostToolUncapped(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	toolName: string,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext = {},
+): Promise<string> {
+	const readonlyReject = tryRejectQuantumIDEReadonlyWriteTool(toolName, context.workspaceReadonly, {
+		autoApplyEdits: context.autoApplyEdits,
+	});
+	if (readonlyReject) {
+		return readonlyReject;
+	}
 	const enrichedContext: IOpenAIHostToolContext = {
 		...context,
 		workspaceLinks: context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []),
@@ -867,6 +1050,7 @@ export async function executeOpenAIHostTool(
 			enrichedContext.workspaceLinks,
 			toolName,
 			enrichedContext.workspaceReadonly,
+			{ autoApplyEdits: enrichedContext.autoApplyEdits },
 		);
 	}
 	switch (toolName) {
@@ -913,6 +1097,10 @@ export async function executeOpenAIHostTool(
 		case 'search_external_retrieval':
 			return searchExternalRetrieval(args, enrichedContext);
 		case 'search_semantic_workspace':
+			if (!isQuantumIDEHostToolAllowedForPipeline('search_semantic_workspace', enrichedContext.agentPipeline)) {
+				recordQuantumIDELitePipelineSemanticToolBlock();
+				return formatQuantumIDELitePipelineSemanticToolBlocked('search_semantic_workspace');
+			}
 			return searchSemanticWorkspace(fileService, workingDirectory, args, enrichedContext);
 		case 'search_vector_workspace':
 			return searchVectorWorkspace(fileService, workingDirectory, args, enrichedContext);
@@ -1013,8 +1201,12 @@ export async function executeOpenAIHostTool(
 	}
 }
 
-export function getOpenAIHostActivityTools(): readonly IOpenAIToolDefinition[] {
-	return [...OPENAI_HOST_ACTIVITY_TOOLS, ...getQuantumIDEPluginHostToolDefinitions()];
+export function getOpenAIHostActivityTools(pipeline?: IOpenAIHostToolContext['agentPipeline']): readonly IOpenAIToolDefinition[] {
+	const tools = [...OPENAI_HOST_ACTIVITY_TOOLS, ...getQuantumIDEPluginHostToolDefinitions()];
+	if (pipeline === 'lite') {
+		return tools.filter(tool => isQuantumIDEHostToolAllowedForPipeline(tool.function.name, pipeline));
+	}
+	return tools;
 }
 
 export function isOpenAIHostTool(toolName: string): boolean {
@@ -1096,17 +1288,19 @@ async function readWorkspaceFile(fileService: IFileService, workingDirectory: UR
 	const maxChars = typeof args.maxChars === 'number' && args.maxChars > 0 ? Math.min(args.maxChars, 48_000) : DEFAULT_MAX_READ_CHARS;
 	const STREAM_READ_THRESHOLD = 512 * 1024;
 	let text: string;
+	let statSize: number | undefined;
 	try {
-		const stat = await fileService.stat(resource);
+		const stat = await hostCoalescedStat(fileService, resource, normalizeQuantumIDEWorkspaceFastPath(pathArg), context);
+		statSize = stat.size;
 		if (!stat.isDirectory && typeof stat.size === 'number' && stat.size > STREAM_READ_THRESHOLD) {
-			const chunk = await fileService.readFile(resource, { length: STREAM_READ_THRESHOLD });
+			const chunk = await hostCoalescedReadFile(fileService, resource, context, { length: STREAM_READ_THRESHOLD });
 			text = chunk.value.toString();
 			text += `\n\n[read first ${STREAM_READ_THRESHOLD} bytes of ${stat.size}; use startLine/endLine for partial reads]`;
 		} else {
-			text = (await fileService.readFile(resource)).value.toString();
+			text = (await hostCoalescedReadFile(fileService, resource, context)).value.toString();
 		}
 	} catch {
-		text = (await fileService.readFile(resource)).value.toString();
+		text = (await hostCoalescedReadFile(fileService, resource, context)).value.toString();
 	}
 	const startLine = getLineNumberArg(args, 'startLine', 'start_line');
 	if (startLine !== undefined) {
@@ -1116,11 +1310,14 @@ async function readWorkspaceFile(fileService: IFileService, workingDirectory: UR
 		const end = endLine !== undefined ? Math.min(lines.length, endLine) : start + 1;
 		text = lines.slice(start, end).join('\n');
 	}
+	const elapsed = Date.now() - start;
+	recordQuantumIDEPerfHistogramSample('agent-read', elapsed);
+	context.contextTracker?.recordLoaded(pathArg, `${text.length}:${statSize ?? 0}`);
 	if (text.length <= maxChars) {
 		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
 			component: 'agent-read',
 			operation: 'read',
-			durationMs: Date.now() - start,
+			durationMs: elapsed,
 			fileCount: 1,
 		}));
 		return text;
@@ -1142,8 +1339,23 @@ async function listWorkspaceDirectory(
 ): Promise<string> {
 	const pathArg = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : '.';
 	const maxEntries = typeof args.maxEntries === 'number' && args.maxEntries > 0 ? Math.min(args.maxEntries, 200) : 80;
+	const structureIndex = await getHostStructureIndex(fileService, workingDirectory, context);
+	if (structureIndex) {
+		const start = Date.now();
+		const policy = await getHostIgnorePolicy(fileService, workingDirectory, context);
+		const listed = listWorkspaceDirectoryFromStructureIndex(structureIndex, pathArg, maxEntries, policy);
+		recordQuantumIDEFastPathHit();
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-search',
+			operation: 'list-dir-index',
+			durationMs: Date.now() - start,
+			fileCount: structureIndex.fileCount,
+			matchCount: listed.lines.length,
+		}));
+		return formatListWorkspaceDirectoryIndexResponse(pathArg, listed);
+	}
 	const resource = await resolveWorkspacePathForHost(fileService, workingDirectory, pathArg, context, 'list');
-	const stat = await fileService.resolve(resource);
+	const stat = await hostCoalescedResolve(fileService, resource, context);
 	if (!stat.isDirectory) {
 		throw new Error(`Not a directory: ${pathArg}`);
 	}
@@ -1231,7 +1443,7 @@ async function listWorkspaceSymbols(fileService: IFileService, workingDirectory:
 		}
 	}
 	const resource = await resolveWorkspacePathForHost(fileService, workingDirectory, pathArg, context, 'read');
-	const text = (await fileService.readFile(resource)).value.toString();
+	const text = (await hostCoalescedReadFile(fileService, resource, context)).value.toString();
 	const lines = text.split(/\r?\n/);
 	const symbols: string[] = [];
 	const patterns = [
@@ -1336,25 +1548,43 @@ async function searchSingleRoot(
 	maxResults: number,
 	policy?: IQuantumIDEWorkspaceIgnorePolicy,
 ): Promise<string> {
-	const rgResult = await searchQuantumIDEWorkspaceTextWithRipgrep(root.fsPath, query, maxResults);
-	if (rgResult) {
-		const filtered = policy
-			? rgResult.matches.filter(line => {
-				const pathPart = line.split(':')[0] ?? '';
-				return !isQuantumIDEPathIgnored(pathPart, policy, 'ai');
-			})
-			: rgResult.matches;
-		if (filtered.length === 0) {
+	const policyKey = quantumIDEWorkspaceTextSearchPolicyKey(policy);
+	const resolved = await resolveQuantumIDEWorkspaceTextSearch(
+		root.fsPath,
+		query,
+		maxResults,
+		policyKey,
+		async () => {
+			const rgResult = await searchQuantumIDEWorkspaceTextWithRipgrepPooled(root.fsPath, query, maxResults);
+			if (!rgResult) {
+				return undefined;
+			}
+			const filtered = policy
+				? rgResult.matches.filter(line => {
+					const pathPart = line.split(':')[0] ?? '';
+					return !isQuantumIDEPathIgnored(pathPart, policy, 'ai');
+				})
+				: rgResult.matches;
+			return { matches: filtered, durationMs: rgResult.durationMs };
+		},
+	);
+	if (resolved) {
+		const { payload, fromCache } = resolved;
+		if (payload.matches.length === 0) {
 			return `No matches found for "${query}".`;
 		}
-		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
-			component: 'agent-search',
-			operation: `ripgrep query=${JSON.stringify(query)}`,
-			matchCount: filtered.length,
-			durationMs: rgResult.durationMs,
-		}));
-		return `Found ${filtered.length} match(es) for "${query}" (ripgrep):\n\n${filtered.join('\n')}`;
+		if (!fromCache) {
+			console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'agent-search',
+				operation: `ripgrep query=${JSON.stringify(query)}`,
+				matchCount: payload.matches.length,
+				durationMs: payload.durationMs,
+			}));
+		}
+		const engineLabel = fromCache ? 'ripgrep (cached)' : 'ripgrep';
+		return `Found ${payload.matches.length} match(es) for "${query}" (${engineLabel}):\n\n${payload.matches.join('\n')}`;
 	}
+	recordQuantumIDERgFallback();
 	const matches: string[] = [];
 	let scanned = 0;
 	await scanDirectory(fileService, root, async (resource) => {
@@ -1743,6 +1973,7 @@ async function refactorWorkspaceFile(
 			context.workspaceLinks,
 			'refactor',
 			context.workspaceReadonly,
+			{ autoApplyEdits: context.autoApplyEdits },
 		);
 		const result = await applyQuantumIDEWorkspaceEdits(fileService, workingDirectory, [{ operation: 'write', path: pathArg, content: next.content }], {
 			workingDirectory,
@@ -1799,6 +2030,7 @@ async function searchSemanticWorkspace(fileService: IFileService, workingDirecto
 async function searchSemanticWorkspaceInner(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>, context?: IOpenAIHostToolContext): Promise<string> {
 	const semanticStart = Date.now();
 	try {
+	recordQuantumIDESemanticWorkspaceToolInvocation();
 	const query = typeof args.query === 'string' ? args.query.trim() : '';
 	if (!query) {
 		throw new Error('search_semantic_workspace requires a query.');

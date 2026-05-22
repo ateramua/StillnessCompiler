@@ -9,7 +9,8 @@ export const QUANTUMIDE_INDEX_SCALE_STANDARD = {
 	maxFileChars: 48_000,
 	maxScanDepth: 6,
 	indexBatchSize: 50,
-	indexYieldMs: 0,
+	/** AC-01-06: yield during scan batches to avoid main-thread long tasks. */
+	indexYieldMs: 16,
 } as const;
 
 export const QUANTUMIDE_INDEX_SCALE_ENTERPRISE = {

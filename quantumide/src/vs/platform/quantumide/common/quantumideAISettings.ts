@@ -49,6 +49,12 @@ export const enum QuantumIDEAISettingId {
 	AgentVelocityParallelHostTools = 'quantumide.ai.agent.velocity.parallelHostTools',
 	AgentVelocityCrossRootSearch = 'quantumide.ai.agent.velocity.crossRootSearch',
 	AgentVelocityHandoffEnabled = 'quantumide.ai.agent.velocity.handoffEnabled',
+	/** PF-03 FR-03-06: auto | lite | full pipeline override. */
+	AgentPipelineMode = 'quantumide.ai.agent.pipelineMode',
+	/** Near-instant agent: fast | safe | auto (lite→fast, complex→safe). */
+	AgentResponseMode = 'quantumide.ai.agent.responseMode',
+	/** Req-05: deterministic fs_simple fast lane without full LLM turn. */
+	AgentFastLaneEnabled = 'quantumide.ai.agent.fastLane.enabled',
 	// Chat panel platform (ChatPanelRe-engineering §3)
 	ChatSyncRealtime = 'quantumide.chat.syncRealtime',
 	WorkspaceAutoRestoreSession = 'quantumide.workspace.autoRestoreSession',
@@ -69,6 +75,8 @@ export const enum QuantumIDEAISettingId {
 	TerminalAutoApproveSafe = 'quantumide.terminal.autoApproveSafe',
 	AgentAutoApplyThreshold = 'quantumide.agent.autoApplyThreshold',
 	IndexingMaxCacheMb = 'quantumide.indexing.maxCacheMb',
+	/** PF-04 MEM-04: in-session workspace graph + prefix + query cache RAM cap (MB). */
+	MemoryBudgetMb = 'quantumide.index.memoryBudgetMb',
 	IndexingMaxFiles = 'quantumide.indexing.maxFiles',
 	IndexingMaxFileChars = 'quantumide.indexing.maxFileChars',
 	AgentIterateUntilComplete = 'quantumide.agent.iterateUntilComplete',

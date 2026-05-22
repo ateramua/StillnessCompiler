@@ -5,6 +5,10 @@
 import * as assert from 'assert';
 import { createEmptyQuantumIDEWorkspaceGraph } from '../../common/quantumideWorkspaceGraph.js';
 import {
+	computeQuantumIDEWatcherGraphVisibilityMs,
+	graphContainsWorkspacePath,
+	isQuantumIDEWatcherGraphVisibleWithinBudget,
+	patchQuantumIDEWorkspaceGraphFromWatcher,
 	planWorkspaceGraphFileWatcherRefresh,
 	QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS,
 	QUANTUMIDE_FILE_WATCHER_INCREMENTAL_DEBOUNCE_MS,
@@ -17,12 +21,12 @@ suite('quantumideWorkspaceGraphWatcher', () => {
 		assert.strictEqual(QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS, 3_000);
 	});
 
-	test('planWorkspaceGraphFileWatcherRefresh uses incremental for small indexed graph changes', () => {
+	test('planWorkspaceGraphFileWatcherRefresh uses incremental only for small indexed graph changes (AC-01-02)', () => {
 		const empty = createEmptyQuantumIDEWorkspaceGraph('ws', [{ name: 'R', uri: 'file:///r' }], 'ok');
 		const graph = { ...empty, status: { ...empty.status, indexed: true } };
 		const plan = planWorkspaceGraphFileWatcherRefresh({ changeCount: 1, graph });
 		assert.strictEqual(plan.runIncremental, true);
-		assert.strictEqual(plan.runDebouncedFullRefresh, true);
+		assert.strictEqual(plan.runDebouncedFullRefresh, false);
 	});
 
 	test('planWorkspaceGraphFileWatcherRefresh falls back to debounced full refresh when batch is large', () => {
@@ -38,5 +42,32 @@ suite('quantumideWorkspaceGraphWatcher', () => {
 		const plan = planWorkspaceGraphFileWatcherRefresh({ changeCount: 1, graph });
 		assert.strictEqual(plan.runIncremental, false);
 		assert.strictEqual(plan.runDebouncedFullRefresh, true);
+	});
+
+	test('AC-01-05: watcher create visible within 3s debounced (incremental 800ms path)', () => {
+		const empty = createEmptyQuantumIDEWorkspaceGraph('ws', [{ name: 'R', uri: 'file:///r' }], 'ok');
+		const graph = { ...empty, status: { ...empty.status, indexed: true } };
+		const plan = planWorkspaceGraphFileWatcherRefresh({ changeCount: 1, graph });
+		assert.ok(isQuantumIDEWatcherGraphVisibleWithinBudget(plan));
+		assert.strictEqual(computeQuantumIDEWatcherGraphVisibilityMs(plan), QUANTUMIDE_FILE_WATCHER_INCREMENTAL_DEBOUNCE_MS);
+		assert.ok(QUANTUMIDE_FILE_WATCHER_INCREMENTAL_DEBOUNCE_MS <= QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS);
+
+		const patched = patchQuantumIDEWorkspaceGraphFromWatcher(graph, {
+			added: [{
+				uri: 'file:///r/src/NewFile.ts',
+				workspaceRelativePath: 'R/src/NewFile.ts',
+				name: 'NewFile.ts',
+				extension: '.ts',
+			}],
+		});
+		assert.ok(graphContainsWorkspacePath(patched, 'R/src/NewFile.ts'));
+	});
+
+	test('AC-01-05: large watcher batch uses full debounce ≤3s', () => {
+		const empty = createEmptyQuantumIDEWorkspaceGraph('ws', [{ name: 'R', uri: 'file:///r' }], 'ok');
+		const graph = { ...empty, status: { ...empty.status, indexed: true } };
+		const plan = planWorkspaceGraphFileWatcherRefresh({ changeCount: 200, graph });
+		assert.strictEqual(computeQuantumIDEWatcherGraphVisibilityMs(plan), QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS);
+		assert.ok(isQuantumIDEWatcherGraphVisibleWithinBudget(plan));
 	});
 });

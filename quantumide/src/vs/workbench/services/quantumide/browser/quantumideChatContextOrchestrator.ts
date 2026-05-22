@@ -15,6 +15,7 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
 import { markQuantumIDEPerformanceEnd, markQuantumIDEPerformanceStart, QuantumIDEPerformanceMark } from '../../../../platform/quantumide/common/quantumidePerformanceMarks.js';
+import { QUANTUMIDE_LITE_AGENT_CONTEXT_BUDGET_MS } from '../../../../platform/quantumide/common/quantumideAgentPipeline.js';
 import {
 	appendPartialContextFooter,
 	assertWithinBudget,
@@ -127,10 +128,16 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 	}
 
 	async buildChatContext(options: IQuantumIDEChatContextBuildOptions = {}): Promise<string> {
+		const pipeline = options.pipeline ?? 'full';
+		const litePipeline = pipeline === 'lite';
 		markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.ChatStartup);
 		markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.ChatContextBuild);
-		const startupDeadline = discoveryBudgetDeadlineMs(QuantumIDEPerformanceBudgetMs.chatStartup);
-		const buildDeadline = discoveryBudgetDeadlineMs(QuantumIDEPerformanceBudgetMs.chatContextBuild);
+		const startupDeadline = discoveryBudgetDeadlineMs(
+			litePipeline ? QUANTUMIDE_LITE_AGENT_CONTEXT_BUDGET_MS : QuantumIDEPerformanceBudgetMs.chatStartup,
+		);
+		const buildDeadline = discoveryBudgetDeadlineMs(
+			litePipeline ? QUANTUMIDE_LITE_AGENT_CONTEXT_BUDGET_MS : QuantumIDEPerformanceBudgetMs.chatContextBuild,
+		);
 		const shouldStopDiscovery = (): boolean => isDiscoveryBudgetExceeded(buildDeadline) || isDiscoveryBudgetExceeded(startupDeadline);
 		const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget) ?? 12000;
 		const ranked: IQuantumIDEContextSection[] = [];
@@ -149,8 +156,8 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 				this._quantumIDEWorkspaceContextService.buildWorkspaceContextByRoot({
 					maxChars: options.maxChars,
 					includeActiveEditor: options.includeActiveEditor,
-					includeDiagnostics: options.includeDiagnostics,
-					includeSCM: options.includeSCM,
+					includeDiagnostics: !litePipeline && options.includeDiagnostics,
+					includeSCM: !litePipeline && options.includeSCM,
 					splitRootsForRanking: true,
 				}));
 			if (byRoot?.primary.trim()) {
@@ -166,30 +173,38 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					ranked.push({ id: 'workspace', title: '', body: fallback, priority: 100 });
 				}
 			}
+			if (litePipeline) {
+				ranked.push({
+					id: 'agent-pipeline-lite',
+					title: 'Agent pipeline',
+					body: 'Lite pipeline: use read/list/exists tools; semantic index sections omitted for this turn.',
+					priority: 101,
+				});
+			}
 			await this._pushSection(ranked, 'editor-state', 'Active editor state', 96, async () => this._editorStateService.formatEditorStateForContext() ?? undefined, shouldStopDiscovery);
 			await this._pushSection(ranked, 'selection', 'Active selection', 95, async () => this._buildSelectionContext(), shouldStopDiscovery);
-			if (options.includeBranch !== false) {
+			if (!litePipeline && options.includeBranch !== false) {
 				await this._pushSection(ranked, 'branch', 'Git branch', 70, () => this._buildGitBranchContext(), shouldStopDiscovery);
 			}
-			if (options.includeOpenTabs !== false && !shouldStopDiscovery()) {
+			if (!litePipeline && options.includeOpenTabs !== false && !shouldStopDiscovery()) {
 				const tabs = this._buildOpenTabsContext();
 				if (tabs) {
 					ranked.push({ id: 'tabs', title: 'Open tabs', body: tabs, priority: 65 });
 				}
 			}
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				const recent = this._buildRecentlyViewedContext();
 				if (recent) {
 					ranked.push({ id: 'recent-files', title: 'Recently viewed files', body: recent, priority: 64 });
 				}
 			}
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				const mcp = this._buildMcpResourcesContext();
 				if (mcp) {
 					ranked.push({ id: 'mcp-resources', title: 'MCP servers (external)', body: mcp, priority: 40 });
 				}
 			}
-			if (options.includeTerminal !== false && !shouldStopDiscovery()) {
+			if (!litePipeline && options.includeTerminal !== false && !shouldStopDiscovery()) {
 				const terminal = this._buildTerminalContext();
 				if (terminal) {
 					ranked.push({ id: 'terminal', title: 'Terminal sessions', body: terminal, priority: 75 });
@@ -200,7 +215,7 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					ranked.push({ id: 'terminal-output', title: 'Terminal output (parsed)', body: `${rawOutput}\n\n${insights}`, priority: 80 });
 				}
 			}
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				const lspSymbols = await this._lspSymbolIndexService.getSymbolGraphPreview(30);
 				if (lspSymbols.length > 0) {
 					ranked.push({
@@ -211,7 +226,7 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					});
 				}
 			}
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				const wsSymbols = this._workspaceSymbolIndexService.getSymbols().slice(0, 35);
 				if (wsSymbols.length > 0) {
 					ranked.push({
@@ -223,7 +238,7 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 				}
 			}
 			const userQuery = options.userQuery;
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				for (const section of buildSemanticIndexFeedContextSections({
 					semantic: this._semanticIndexService.getSemanticIndex(),
 					ast: this._semanticIndexService.getAstIndex(),
@@ -235,7 +250,7 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					ranked.push(section);
 				}
 			}
-			if (!shouldStopDiscovery()) {
+			if (!litePipeline && !shouldStopDiscovery()) {
 				const liveDiagnostics = this._buildLiveDiagnosticsContext();
 				if (liveDiagnostics) {
 					ranked.push({
@@ -246,17 +261,21 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					});
 				}
 			}
-			await this._pushSection(ranked, 'project-manifests', 'Project manifests', 92, () => this._buildProjectManifestContext(), shouldStopDiscovery);
-			if (userQuery) {
+			if (!litePipeline) {
+				await this._pushSection(ranked, 'project-manifests', 'Project manifests', 92, () => this._buildProjectManifestContext(), shouldStopDiscovery);
+			}
+			if (!litePipeline && userQuery) {
 				await this._pushSection(ranked, 'context-expansion', 'Auto-expanded related context', 91, () => this._contextExpansionService.buildAutomaticExpansionSection(userQuery), shouldStopDiscovery);
 			}
-			if (options.includeNavigationHistory !== false && !shouldStopDiscovery()) {
+			if (!litePipeline && options.includeNavigationHistory !== false && !shouldStopDiscovery()) {
 				const navigation = this._buildNavigationHistoryContext();
 				if (navigation) {
 					ranked.push({ id: 'navigation', title: 'Editor navigation', body: navigation, priority: 40 });
 				}
 			}
-			await this._pushSection(ranked, 'file-history', 'File history', 35, () => this._buildFileHistoryContext(), shouldStopDiscovery);
+			if (!litePipeline) {
+				await this._pushSection(ranked, 'file-history', 'File history', 35, () => this._buildFileHistoryContext(), shouldStopDiscovery);
+			}
 		} catch (err) {
 			degraded = true;
 			this._logService.warn(formatQuantumIDEWorkspaceDiscoveryLog({
@@ -275,6 +294,13 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 		const startupElapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.ChatStartup) ?? 0;
 		assertWithinBudget('chatContextBuild', contextElapsed, QuantumIDEPerformanceBudgetMs.chatContextBuild);
 		assertWithinBudget('chatStartup', startupElapsed, QuantumIDEPerformanceBudgetMs.chatStartup);
+		this._logService.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'chat-context',
+			operation: 'buildChatContext',
+			durationMs: Math.round(contextElapsed),
+			fileCount: ranked.length,
+			fallback: degraded ? 'partial' : 'complete',
+		}));
 		return body;
 	}
 

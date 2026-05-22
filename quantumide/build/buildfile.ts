@@ -16,6 +16,7 @@ export const workerExtensionHost = createModuleDescription('vs/workbench/api/wor
 export const workerNotebook = createModuleDescription('vs/workbench/contrib/notebook/common/services/notebookWebWorkerMain');
 export const workerLanguageDetection = createModuleDescription('vs/workbench/services/languageDetection/browser/languageDetectionWebWorkerMain');
 export const workerLocalFileSearch = createModuleDescription('vs/workbench/services/search/worker/localFileSearchMain');
+export const workerQuantumIDEIndexerCpu = createModuleDescription('vs/workbench/services/quantumide/browser/worker/quantumideIndexerCpu.workerMain');
 export const workerProfileAnalysis = createModuleDescription('vs/platform/profiling/electron-browser/profileAnalysisWorkerMain');
 export const workerOutputLinks = createModuleDescription('vs/workbench/contrib/output/common/outputLinkComputerMain');
 export const workerBackgroundTokenization = createModuleDescription('vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.workerMain');
@@ -70,6 +71,7 @@ const buildfile = {
 	workerNotebook,
 	workerLanguageDetection,
 	workerLocalFileSearch,
+	workerQuantumIDEIndexerCpu,
 	workerProfileAnalysis,
 	workerOutputLinks,
 	workerBackgroundTokenization,

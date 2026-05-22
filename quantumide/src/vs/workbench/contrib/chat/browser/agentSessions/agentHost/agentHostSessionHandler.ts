@@ -84,6 +84,8 @@ import {
 	buildPinnedTaskSpecAttachment,
 	buildQuantumIDEAgentRulesAttachments,
 } from '../../../../../services/quantumide/browser/quantumideAgentVelocityAttachments.js';
+import { chatVariablesHaveQuantumIDECodebaseAttachment, resolveQuantumIDEAgentPipelineForTurn } from '../../../../../../platform/quantumide/common/quantumideAgentIntentClassifier.js';
+import { recordQuantumIDEAgentPipeline } from '../../../../../../platform/quantumide/common/quantumideAgentPipelineTelemetry.js';
 
 // =============================================================================
 // AgentHostSessionHandler - renderer-side handler for a single agent host
@@ -1121,7 +1123,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		const turnId = request.requestId;
 		this._clientDispatchedTurnIds.add(turnId);
 		const messageAttachments = await this._convertVariablesToAttachments(request);
-		await this._appendQuantumIDEChatContextAttachment(messageAttachments, request.sessionResource, request.message);
+		await this._appendQuantumIDEChatContextAttachment(messageAttachments, request.sessionResource, request.message, request.variables.variables);
 		await this._appendQuantumIDEChatModeAttachment(messageAttachments, request);
 		await this._appendWorkspacePoliciesAttachment(messageAttachments);
 		await this._appendAgentVelocityAttachments(messageAttachments);
@@ -2937,7 +2939,12 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		}
 	}
 
-	private async _appendQuantumIDEChatContextAttachment(attachments: MessageAttachment[], sessionResource: URI, userQuery?: string): Promise<void> {
+	private async _appendQuantumIDEChatContextAttachment(
+		attachments: MessageAttachment[],
+		sessionResource: URI,
+		userQuery?: string,
+		requestVariables?: readonly { readonly id?: string; readonly name?: string }[],
+	): Promise<void> {
 		if (!isQuantumIDEProduct(this._productService.applicationName)) {
 			return;
 		}
@@ -2945,6 +2952,10 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			return;
 		}
 		try {
+			const pipelineMode = this._configurationService.getValue<string>(QuantumIDEAISettingId.AgentPipelineMode);
+			const hasCodebaseAttachment = chatVariablesHaveQuantumIDECodebaseAttachment(requestVariables);
+			const { classification, pipeline } = resolveQuantumIDEAgentPipelineForTurn(userQuery ?? '', pipelineMode, undefined, { hasCodebaseAttachment });
+			recordQuantumIDEAgentPipeline(pipeline);
 			markChat(sessionResource, ChatPerfMark.ContextBuildWillStart);
 			const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget);
 			const maxChars = typeof tokenBudget === 'number' && tokenBudget > 1000 ? Math.min(tokenBudget, 24_000) : 14_000;
@@ -2957,11 +2968,12 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				includeTerminal: true,
 				includeNavigationHistory: true,
 				userQuery,
+				pipeline,
 			});
 			const partial = context.includes('[QuantumIDE] Partial context');
 			markChat(sessionResource, ChatPerfMark.ContextBuildDidComplete, {
 				chars: context.length,
-				detail: partial ? 'degraded' : undefined,
+				detail: `pipeline=${pipeline}${partial ? ',degraded' : ''}`,
 				partial,
 			});
 			if (!context.trim()) {
@@ -2971,7 +2983,13 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				type: MessageAttachmentKind.Simple,
 				label: 'QuantumIDE chat context',
 				modelRepresentation: context,
-				_meta: { source: 'quantumide-workspace-intelligence', automatic: true },
+				_meta: {
+					source: 'quantumide-workspace-intelligence',
+					automatic: true,
+					pipeline,
+					intent: classification.intent,
+					codebase: hasCodebaseAttachment || undefined,
+				},
 			});
 		} catch (error) {
 			markChat(sessionResource, ChatPerfMark.ContextBuildDidComplete, { detail: 'failed' });

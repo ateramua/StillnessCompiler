@@ -43,6 +43,8 @@ export class QuantumIDEWorkspaceIgnoreService extends Disposable implements IQua
 				this.invalidate();
 			}
 		}));
+		// AC-01-03: warm ignore policy before first @ mention on cold open.
+		void this.getPolicy();
 	}
 
 	async getPolicy(): Promise<IQuantumIDEWorkspaceIgnorePolicy> {
@@ -56,6 +58,7 @@ export class QuantumIDEWorkspaceIgnoreService extends Disposable implements IQua
 			this._loadPromise = undefined;
 		});
 		this._policy = await this._loadPromise;
+		this._workspaceContext.rebuildCachedAtMentionPaths(this._policy);
 		return this._policy;
 	}
 

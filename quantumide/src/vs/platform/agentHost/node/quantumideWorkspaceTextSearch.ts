@@ -21,6 +21,16 @@ export const QUANTUMIDE_WORKSPACE_TEXT_SEARCH_TIMEOUT_MS = 30_000;
 
 const rgDiskPath = rgPath.replace(/\bnode_modules\.asar\b/, 'node_modules.asar.unpacked');
 
+let ripgrepSpawnCount = 0;
+
+export function getQuantumIDEWorkspaceTextRipgrepSpawnCount(): number {
+	return ripgrepSpawnCount;
+}
+
+export function resetQuantumIDEWorkspaceTextRipgrepSpawnCountForTests(): void {
+	ripgrepSpawnCount = 0;
+}
+
 export type QuantumIDEWorkspaceTextSearchEngine = 'ripgrep' | 'scan';
 
 export interface IQuantumIDEWorkspaceTextRipgrepResult {
@@ -64,6 +74,7 @@ export async function searchQuantumIDEWorkspaceTextWithRipgrep(
 	return new Promise(resolve => {
 		let child: cp.ChildProcess;
 		try {
+			ripgrepSpawnCount++;
 			child = cp.spawn(rgDiskPath, args, { cwd: rootPath, stdio: ['ignore', 'pipe', 'pipe'] });
 		} catch {
 			resolve(undefined);

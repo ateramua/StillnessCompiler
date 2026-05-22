@@ -74,15 +74,14 @@ suite('quantumideWorkspaceReadonly', () => {
 		);
 		assert.ok(searchResult.includes('NEEDLE') || searchResult.includes('match'));
 
-		await assert.rejects(
-			() => executeOpenAIHostTool(
-				fileService,
-				root,
-				'apply_workspace_edits',
-				{ edits: [{ operation: 'write', path: 'src/b.ts', content: 'export {};\n' }] },
-				{ autoApplyEdits: true, workspaceReadonly: true },
-			),
-			(err: Error) => err.message.includes('read-only') && err.message.includes('apply_workspace_edits'),
+		const writeResult = await executeOpenAIHostTool(
+			fileService,
+			root,
+			'apply_workspace_edits',
+			{ edits: [{ operation: 'write', path: 'src/b.ts', content: 'export {};\n' }] },
+			{ autoApplyEdits: true, workspaceReadonly: true },
 		);
+		assert.ok(writeResult.includes('read-only'));
+		assert.ok(writeResult.includes('apply_workspace_edits'));
 	});
 });

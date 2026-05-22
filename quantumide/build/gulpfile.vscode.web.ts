@@ -112,6 +112,7 @@ const vscodeWebEntryPoints = [
 	buildfile.workerNotebook,
 	buildfile.workerLanguageDetection,
 	buildfile.workerLocalFileSearch,
+	buildfile.workerQuantumIDEIndexerCpu,
 	buildfile.workerOutputLinks,
 	buildfile.workerBackgroundTokenization,
 	buildfile.keyboardMaps,

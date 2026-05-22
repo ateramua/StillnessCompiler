@@ -4,6 +4,7 @@
 
 import { Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import type { QuantumIDEAgentPipeline } from '../../../../platform/quantumide/common/quantumideAgentPipeline.js';
 import type { IQuantumIDEWorkspaceContextBuildOptions } from './quantumideWorkspaceContext.js';
 
 export interface IQuantumIDEChatContextBuildOptions extends IQuantumIDEWorkspaceContextBuildOptions {
@@ -12,6 +13,8 @@ export interface IQuantumIDEChatContextBuildOptions extends IQuantumIDEWorkspace
 	readonly includeBranch?: boolean;
 	readonly includeNavigationHistory?: boolean;
 	readonly userQuery?: string;
+	/** PF-03 PL-*: lite skips semantic expansion and heavy sections. */
+	readonly pipeline?: QuantumIDEAgentPipeline;
 }
 
 export interface IQuantumIDEChatContextOrchestrator {

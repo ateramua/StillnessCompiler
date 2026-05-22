@@ -69,9 +69,16 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 		}
 
 		this._register(this._ctx.onDidChangeGraph(() => {
-			this._warmPathsCacheKey = undefined;
-			this._warmPathsCache = undefined;
+			const sync = this._ctx.getCachedAtMentionPaths();
+			this._warmPathsCacheKey = sync.length > 0 ? `sync:${sync.length}:${this._ctx.getWorkspaceGraph()?.status.generatedAt ?? ''}` : undefined;
+			this._warmPathsCache = sync.length > 0 ? sync : undefined;
 		}));
+		const initialSync = this._ctx.getCachedAtMentionPaths();
+		if (initialSync.length > 0) {
+			this._warmPathsCacheKey = `sync:${initialSync.length}`;
+			this._warmPathsCache = initialSync;
+		}
+		void this._ignore.getPolicy();
 		this._register(this._configuration.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration(QuantumIDEAISettingId.IndexingIgnoreFile)
 				|| e.affectsConfiguration(QuantumIDEAISettingId.IndexingExcludePatterns)) {
@@ -217,9 +224,18 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 
 	private async _getWarmAtMentionPaths(): Promise<readonly string[]> {
 		const graph = this._ctx.getWorkspaceGraph();
-		const cacheKey = `${graph?.status.generatedAt ?? 'none'}:${graph?.files.length ?? 0}`;
+		const syncPaths = this._ctx.getCachedAtMentionPaths();
+		const cacheKey = syncPaths.length > 0
+			? `sync:${graph?.status.generatedAt ?? 'none'}:${syncPaths.length}`
+			: `${graph?.status.generatedAt ?? 'none'}:${graph?.files.length ?? 0}`;
 		if (this._warmPathsCacheKey === cacheKey && this._warmPathsCache) {
 			return this._warmPathsCache;
+		}
+		if (syncPaths.length > 0) {
+			this._warmPathsCacheKey = cacheKey;
+			this._warmPathsCache = syncPaths;
+			void this._refreshAtMentionPathsWithIgnorePolicy();
+			return syncPaths;
 		}
 		const policy = await this._ignore.getPolicy();
 		const paths: string[] = [];
@@ -231,6 +247,16 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 		this._warmPathsCacheKey = cacheKey;
 		this._warmPathsCache = paths;
 		return paths;
+	}
+
+	/** Refine @ paths after async ignore files load; does not block cold-open completions. */
+	private async _refreshAtMentionPathsWithIgnorePolicy(): Promise<void> {
+		const policy = await this._ignore.getPolicy();
+		this._ctx.rebuildCachedAtMentionPaths(policy);
+		const refined = this._ctx.getCachedAtMentionPaths();
+		const graph = this._ctx.getWorkspaceGraph();
+		this._warmPathsCacheKey = `sync:${graph?.status.generatedAt ?? 'none'}:${refined.length}`;
+		this._warmPathsCache = refined;
 	}
 
 	private _fileSuggestion(

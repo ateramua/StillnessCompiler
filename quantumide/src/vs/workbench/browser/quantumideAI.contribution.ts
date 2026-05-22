@@ -410,6 +410,36 @@ function registerQuantumIDEAIConfiguration(): void {
 				scope: ConfigurationScope.RESOURCE,
 				markdownDescription: localize('quantumide.ai.semanticIndexing.enabled', 'Future-ready switch for semantic/vector indexing. The MVP keeps this disabled and uses local lexical/project-graph indexing only.'),
 			},
+			[QuantumIDEAISettingId.AgentPipelineMode]: {
+				type: 'string',
+				default: 'auto',
+				enum: ['auto', 'lite', 'full'],
+				enumDescriptions: [
+					localize('quantumide.ai.agent.pipelineMode.auto', 'Classify each turn (fs_simple → Lite, search → Standard, else Full).'),
+					localize('quantumide.ai.agent.pipelineMode.lite', 'Always use the Lite pipeline (read/list/exists; no semantic context).'),
+					localize('quantumide.ai.agent.pipelineMode.full', 'Always use the Full orchestration pipeline.'),
+				],
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.pipelineMode', 'Controls whether agent turns use Lite, Standard, or Full context/tool orchestration.'),
+			},
+			[QuantumIDEAISettingId.AgentResponseMode]: {
+				type: 'string',
+				default: 'auto',
+				enum: ['auto', 'fast', 'safe'],
+				enumDescriptions: [
+					localize('quantumide.ai.agent.responseMode.auto', 'Lite pipeline → fast; full pipeline → safe.'),
+					localize('quantumide.ai.agent.responseMode.fast', 'Minimal verification, shallow context, fs_simple fast lane.'),
+					localize('quantumide.ai.agent.responseMode.safe', 'Full verification, deep context, no fast lane bypass.'),
+				],
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.responseMode', 'Near-instant agent response mode (planning depth and verification).'),
+			},
+			[QuantumIDEAISettingId.AgentFastLaneEnabled]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.agent.fastLane.enabled', 'Answer simple existence/list questions from the workspace index without a full LLM turn.'),
+			},
 			[QuantumIDEAISettingId.AgentVelocityProfile]: {
 				type: 'string',
 				default: 'dev',
@@ -751,6 +781,14 @@ function registerQuantumIDEAIConfiguration(): void {
 				maximum: 4096,
 				scope: ConfigurationScope.RESOURCE,
 				markdownDescription: localize('quantumide.indexing.maxCacheMb', 'Soft limit for combined `.quantumide` index cache size (MB). Reindex if exceeded.'),
+			},
+			[QuantumIDEAISettingId.MemoryBudgetMb]: {
+				type: 'number',
+				default: 512,
+				minimum: 32,
+				maximum: 4096,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.index.memoryBudgetMb', 'In-session workspace graph and prefix/query cache RAM cap (MB). Enforced by the performance coordinator (PF-04).'),
 			},
 			[QuantumIDEAISettingId.IndexingMaxFiles]: {
 				type: 'number',

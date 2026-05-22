@@ -20,6 +20,7 @@ if (product.nameShort === 'QuantumIDE') {
 				// New workspaces: hide secondary side bar (GitHub Copilot Chat) unless user opts in.
 				'workbench.secondarySideBar.defaultVisibility': 'hidden',
 				'quantumide.ai.indexing.enabled': false,
+				'quantumide.index.memoryBudgetMb': 512,
 				'quantumide.ai.agent.velocity.crossRootSearch': true,
 				'quantumide.ai.semanticIndexing.enabled': false,
 				'quantumide.chat.syncRealtime': true,

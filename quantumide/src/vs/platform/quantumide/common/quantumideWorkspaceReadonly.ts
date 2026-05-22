@@ -8,6 +8,12 @@ import { collectAgentSearchRoots } from './quantumideWorkspaceRoots.js';
 import type { IQuantumIDEWorkspaceLink } from './workspaceLinks.js';
 import { isQuantumIDERefactorHostTool } from './quantumideRefactorHostTools.js';
 
+/** AC-03-04 / SAFE-01: cached read-only flag → reject write tools within this budget. */
+export const QUANTUMIDE_WORKSPACE_READONLY_WRITE_FAIL_BUDGET_MS = 5;
+
+/** Proposal tools that mutate workspace files when approved. */
+export const QUANTUMIDE_PROPOSAL_WRITE_HOST_TOOLS = new Set(['propose_file_edit']);
+
 /** Host tools that create/update/delete workspace files (SEC-05). */
 export const QUANTUMIDE_WORKSPACE_FILE_MUTATING_HOST_TOOLS = new Set([
 	'apply_workspace_edits',
@@ -32,6 +38,63 @@ export function isQuantumIDEWorkspaceFileMutatingHostTool(
 		return true;
 	}
 	return options?.autoApplyEdits === true && isQuantumIDERefactorHostTool(toolName);
+}
+
+export function isQuantumIDEAgentWriteHostTool(
+	toolName: string,
+	options?: { autoApplyEdits?: boolean },
+): boolean {
+	return isQuantumIDEWorkspaceFileMutatingHostTool(toolName, options)
+		|| QUANTUMIDE_PROPOSAL_WRITE_HOST_TOOLS.has(toolName);
+}
+
+let _readonlyWriteRejectCount = 0;
+let _lastReadonlyWriteRejectMs = 0;
+
+export function recordQuantumIDEWorkspaceReadonlyWriteReject(durationMs: number): void {
+	_readonlyWriteRejectCount++;
+	_lastReadonlyWriteRejectMs = durationMs;
+}
+
+export function getQuantumIDEWorkspaceReadonlyWriteRejectCount(): number {
+	return _readonlyWriteRejectCount;
+}
+
+export function getLastQuantumIDEWorkspaceReadonlyWriteRejectMs(): number {
+	return _lastReadonlyWriteRejectMs;
+}
+
+export function resetQuantumIDEWorkspaceReadonlyTelemetryForTests(): void {
+	_readonlyWriteRejectCount = 0;
+	_lastReadonlyWriteRejectMs = 0;
+}
+
+/**
+ * O(1) fast path when `workspaceReadonly === true` is already cached (AC-03-04).
+ * Returns a tool error string instead of throwing so callers avoid stack traces (SAFE-03).
+ */
+export function tryRejectQuantumIDEReadonlyWriteTool(
+	toolName: string,
+	workspaceReadonly: boolean | undefined,
+	options?: { autoApplyEdits?: boolean },
+): string | undefined {
+	const start = performance.now();
+	if (workspaceReadonly !== true || !isQuantumIDEAgentWriteHostTool(toolName, options)) {
+		return undefined;
+	}
+	const message = formatQuantumIDEWorkspaceReadonlyToolError(toolName);
+	recordQuantumIDEWorkspaceReadonlyWriteReject(performance.now() - start);
+	return message;
+}
+
+export function measureQuantumIDEReadonlyWriteRejectCallMs(
+	toolName: string,
+	workspaceReadonly: boolean,
+	options?: { autoApplyEdits?: boolean },
+): number {
+	const start = performance.now();
+	tryRejectQuantumIDEReadonlyWriteTool(toolName, workspaceReadonly, options);
+	return performance.now() - start;
 }
 
 /** User-visible tool error when the workspace filesystem is read-only (SEC-05). */
@@ -79,7 +142,12 @@ export async function assertQuantumIDEWorkspaceWritableForTool(
 	workspaceLinks: readonly IQuantumIDEWorkspaceLink[] | undefined,
 	toolName: string,
 	workspaceReadonly?: boolean,
+	options?: { autoApplyEdits?: boolean },
 ): Promise<void> {
+	const fast = tryRejectQuantumIDEReadonlyWriteTool(toolName, workspaceReadonly, options);
+	if (fast) {
+		throw new Error(fast);
+	}
 	const readonly = workspaceReadonly ?? await detectQuantumIDEWorkspaceReadonly(fileService, workingDirectory, workspaceLinks);
 	if (readonly) {
 		throw new Error(formatQuantumIDEWorkspaceReadonlyToolError(toolName));

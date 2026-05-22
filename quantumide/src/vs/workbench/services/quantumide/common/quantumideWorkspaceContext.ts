@@ -5,6 +5,7 @@
 import { Event } from '../../../../base/common/event.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IQuantumIDEWorkspaceGraph } from '../../../../platform/quantumide/common/quantumideWorkspaceGraph.js';
+import type { IQuantumIDEWorkspaceGraphStructureIndex } from '../../../../platform/quantumide/common/quantumideWorkspaceGraphStructureIndex.js';
 
 export interface IQuantumIDEWorkspaceContextBuildOptions {
 	readonly maxChars?: number;
@@ -21,6 +22,11 @@ export interface IQuantumIDEWorkspaceContextService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChangeGraph: Event<IQuantumIDEWorkspaceGraph>;
 	getWorkspaceGraph(): IQuantumIDEWorkspaceGraph | undefined;
+	/** AC-01-01: O(1) exists / list_dir from the current workspace graph (no filesystem walk). */
+	getWorkspaceStructureIndex(): IQuantumIDEWorkspaceGraphStructureIndex | undefined;
+	/** AC-01-03: sync @ mention paths from hydrated graph (before lite scan / ignore file I/O). */
+	getCachedAtMentionPaths(): readonly string[];
+	rebuildCachedAtMentionPaths(policy?: import('../../../../platform/quantumide/common/quantumideWorkspaceIgnore.js').IQuantumIDEWorkspaceIgnorePolicy): void;
 	refreshWorkspaceGraph(reason?: string): Promise<IQuantumIDEWorkspaceGraph>;
 	buildWorkspaceContext(options?: IQuantumIDEWorkspaceContextBuildOptions): Promise<string>;
 	/** MP-05: primary = preferred root snapshot; secondary = other roots (lower priority for ranker). */

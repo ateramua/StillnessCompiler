@@ -98,11 +98,11 @@ flowchart TB
 
 | ID | Requirement |
 |----|-------------|
-| NFR-CC-01 | - [ ] Any single discovery operation triggered by chat send MUST complete within configured performance budgets (`QuantumIDEPerformanceBudgetMs.chatStartup`, `chatContextBuild`) or degrade gracefully with partial context. |
+| NFR-CC-01 | - [x] Any single discovery operation triggered by chat send MUST complete within configured performance budgets (`QuantumIDEPerformanceBudgetMs.chatStartup`, `chatContextBuild`) or degrade gracefully with partial context. |
 | NFR-CC-02 | - [x] All mechanisms MUST respect **workspace trust**; untrusted workspaces MUST NOT perform deep scans or read sensitive paths beyond VS Code defaults. |
 | NFR-CC-03 | - [x] Secrets MUST NOT be indexed or attached: `.env`, `*.pem`, `*.key` (extend list via settings). |
 | NFR-CC-04 | - [x] Token/context budgets MUST be enforced centrally (rank + trim); no mechanism may bypass the budget silently. |
-| NFR-CC-05 | - [ ] Every mechanism MUST emit structured logs at `info` for success summaries and `warn`/`error` for failures; chat perf instrumentation MUST record marks when enabled. |
+| NFR-CC-05 | - [x] Every mechanism MUST emit structured logs at `info` for success summaries and `warn`/`error` for failures; chat perf instrumentation MUST record marks when enabled. |
 | NFR-CC-06 | - [x] Multi-project workspaces MUST scale via caps, truncation flags, and explicit “omitted N files” messaging—not unbounded memory growth. |
 
 ---

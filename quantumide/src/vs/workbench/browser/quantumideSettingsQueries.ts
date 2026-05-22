@@ -67,6 +67,7 @@ export const SETTINGS_QUERIES: Record<QuantumIDEChatSettingsCategory, string> = 
 		QuantumIDEAISettingId.IndexingMaxFiles,
 		QuantumIDEAISettingId.IndexingMaxFileChars,
 		QuantumIDEAISettingId.IndexingMaxCacheMb,
+		QuantumIDEAISettingId.MemoryBudgetMb,
 	].map(id => `@id:${id}`).join(' '),
 	privacy: [
 		QuantumIDEAISettingId.PrivacyLocalIndexingOnly,

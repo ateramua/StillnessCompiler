@@ -72,6 +72,31 @@ const atMentionAvgMs = measureQuantumIDEAtMentionFuzzyMatchMs(warm5k, 'file4', 3
 assert.ok(atMentionAvgMs < QUANTUMIDE_AT_MENTION_MATCH_BUDGET_MS, `at-mention p95 target ${QUANTUMIDE_AT_MENTION_MATCH_BUDGET_MS}ms, got ${atMentionAvgMs}`);
 console.log('at-mention-warm-avg-ms', atMentionAvgMs.toFixed(2));
 
+const {
+  measureQuantumIDEWarmExistsBatchFromGraphMs,
+  QUANTUMIDE_FAST_PATH_EXISTS_WARM_BATCH_BUDGET_MS,
+  QUANTUMIDE_FAST_PATH_EXISTS_WARM_BATCH_SIZE,
+} = req('vs/platform/quantumide/common/quantumideWorkspaceFastPathPerformance.js');
+const warmExists = measureQuantumIDEWarmExistsBatchFromGraphMs();
+assert.strictEqual(warmExists.hits, QUANTUMIDE_FAST_PATH_EXISTS_WARM_BATCH_SIZE);
+assert.strictEqual(warmExists.misses, 0);
+assert.ok(
+  warmExists.totalMs <= QUANTUMIDE_FAST_PATH_EXISTS_WARM_BATCH_BUDGET_MS,
+  `AC-02-01 warm exists ${warmExists.totalMs.toFixed(2)}ms > ${QUANTUMIDE_FAST_PATH_EXISTS_WARM_BATCH_BUDGET_MS}ms`,
+);
+console.log('fast-path-warm-exists-ms', warmExists.totalMs.toFixed(2));
+
+const {
+  measureQuantumIDEListWorkspaceDirectoryIndexP95Ms,
+  QUANTUMIDE_LIST_WORKSPACE_DIRECTORY_P95_BUDGET_MS,
+} = req('vs/platform/quantumide/common/quantumideListWorkspaceDirectoryPerformance.js');
+const listDirP95 = measureQuantumIDEListWorkspaceDirectoryIndexP95Ms();
+assert.ok(
+  listDirP95 < QUANTUMIDE_LIST_WORKSPACE_DIRECTORY_P95_BUDGET_MS,
+  `AC-02-02 list_workspace_directory P95 ${listDirP95.toFixed(3)}ms > ${QUANTUMIDE_LIST_WORKSPACE_DIRECTORY_P95_BUDGET_MS}ms`,
+);
+console.log('list-workspace-directory-index-p95-ms', listDirP95.toFixed(3));
+
 const { QuantumIDEPerformanceBudgetMs, appendPartialContextFooter } = req('vs/platform/quantumide/common/quantumidePerformanceBudgets.js');
 assert.strictEqual(QuantumIDEPerformanceBudgetMs.chatContextBuild, 500);
 assert.ok(appendPartialContextFooter('ctx', true).includes('Partial context'));
@@ -109,6 +134,56 @@ const liteErrors = validateQuantumIDELiteGraphListsAllRoots(fiveRootGraph);
 assert.strictEqual(liteErrors.length, 0, liteErrors.join('; '));
 
 const {
+  computeQuantumIDEMultiRootScanConcurrency,
+} = req('vs/platform/quantumide/common/quantumideParallelRootScan.js');
+assert.strictEqual(computeQuantumIDEMultiRootScanConcurrency(5), 4);
+
+const {
+  measureQuantumIDE5RootParallelLiteScanMs,
+  QUANTUMIDE_5_ROOT_LITE_WALL_BUDGET_MS,
+} = req('vs/platform/quantumide/common/quantumideLiteGraphParallelPerformance.js');
+const lite5Root = await measureQuantumIDE5RootParallelLiteScanMs();
+assert.ok(
+  lite5Root.wallMs <= QUANTUMIDE_5_ROOT_LITE_WALL_BUDGET_MS,
+  `AC-04-02 5-root parallel lite ${lite5Root.wallMs.toFixed(0)}ms > ${QUANTUMIDE_5_ROOT_LITE_WALL_BUDGET_MS}ms`,
+);
+console.log('parallel-5-root-lite-wall-ms', lite5Root.wallMs.toFixed(0), 'concurrency', lite5Root.concurrency);
+
+const {
+  measureQuantumIDE100kWorkspaceCacheMemory,
+  QUANTUMIDE_100K_MEMORY_BUDGET_MB,
+} = req('vs/platform/quantumide/common/quantumideWorkspace100kMemoryPerformance.js');
+const mem100k = measureQuantumIDE100kWorkspaceCacheMemory();
+assert.ok(mem100k.withinBudget, `AC-04-03 estimated=${mem100k.estimatedMb.toFixed(1)}MB heap=${mem100k.heapDeltaMb.toFixed(1)}MB`);
+assert.ok(mem100k.estimatedMb <= QUANTUMIDE_100K_MEMORY_BUDGET_MB);
+console.log('graph-100k-memory-estimated-mb', mem100k.estimatedMb.toFixed(2), 'budget-mb', QUANTUMIDE_100K_MEMORY_BUDGET_MB);
+
+const {
+  verifyQuantumIDEWorkspaceTextSearchCacheAvoidsSecondSearch,
+} = req('vs/platform/quantumide/common/quantumideWorkspaceTextSearchQueryCachePerformance.js');
+const queryCache = await verifyQuantumIDEWorkspaceTextSearchCacheAvoidsSecondSearch();
+assert.strictEqual(queryCache.searchCalls, 1);
+assert.ok(queryCache.cacheHits >= 1);
+console.log('query-cache-hit', queryCache.cacheHits, 'rg-search-calls', queryCache.searchCalls);
+
+const {
+  verifyQuantumIDEGraphPatchRefreshConsistency,
+} = req('vs/platform/quantumide/common/quantumideWorkspaceGraphRefreshConsistency.js');
+const graphRace = verifyQuantumIDEGraphPatchRefreshConsistency();
+assert.strictEqual(graphRace.consistent, true);
+assert.strictEqual(graphRace.finalFileCount, 20);
+assert.strictEqual(graphRace.patchCommitted, false);
+console.log('graph-patch-refresh-consistent', graphRace.finalFileCount);
+
+const {
+  measureQuantumIDEGraphContextAttachmentReduction,
+  QUANTUMIDE_GRAPH_CONTEXT_COMPACT_MIN_REDUCTION,
+} = req('vs/platform/quantumide/common/quantumideWorkspaceGraphContextAttachmentPerformance.js');
+const graphAttach = measureQuantumIDEGraphContextAttachmentReduction();
+assert.ok(graphAttach.meetsAc0305, `AC-03-05 reduction ${(graphAttach.reductionRatio * 100).toFixed(1)}% < ${QUANTUMIDE_GRAPH_CONTEXT_COMPACT_MIN_REDUCTION * 100}%`);
+console.log('graph-context-attach-full-bytes', graphAttach.fullBytes, 'compact-bytes', graphAttach.compactBytes, 'reduction-pct', (graphAttach.reductionRatio * 100).toFixed(1));
+
+const {
 	QUANTUMIDE_WORKSPACE_UNTRUSTED_REASON,
 	validateQuantumIDEUntrustedWorkspaceGraph,
 	formatQuantumIDEWorkspaceTrustWarningForContext,
@@ -124,6 +199,65 @@ assert.ok(warn.includes('not trusted') && warn.includes('full workspace file sca
 const { resolveQuantumIDEWorkspaceVariablePath } = req('vs/platform/quantumide/common/quantumideWorkspaceRoots.js');
 const { toWorkspaceVariableEntry } = req('vs/workbench/contrib/chat/common/attachments/chatVariableEntries.js');
 const { URI } = req('vs/base/common/uri.js');
+const { VSBuffer } = req('vs/base/common/buffer.js');
+const { Schemas } = req('vs/base/common/network.js');
+const { FileService } = req('vs/platform/files/common/fileService.js');
+const { InMemoryFileSystemProvider } = req('vs/platform/files/common/inMemoryFilesystemProvider.js');
+const { NullLogService } = req('vs/platform/log/common/log.js');
+const { runQuantumIDEParallelHostReadCoalesceFixture } = req('vs/platform/quantumide/common/quantumideHostAgentRoundFileCache.js');
+const { executeOpenAIHostTool } = req('vs/platform/agentHost/node/openai/openaiHostTools.js');
+const ac203Log = new NullLogService();
+const ac203FileService = new FileService(ac203Log);
+const ac203Provider = new InMemoryFileSystemProvider();
+ac203FileService.registerProvider(Schemas.file, ac203Provider);
+const ac203Root = URI.file('/ac203-workspace');
+await ac203FileService.writeFile(URI.joinPath(ac203Root, 'same.ts'), VSBuffer.fromString('export const same = 1;\n'));
+const coalesce = await runQuantumIDEParallelHostReadCoalesceFixture(async cache => {
+  await executeOpenAIHostTool(ac203FileService, ac203Root, 'read_workspace_file', { path: 'same.ts' }, { agentRoundFileCache: cache });
+}, 8);
+assert.strictEqual(coalesce.statCalls, 1);
+assert.strictEqual(coalesce.readCalls, 1);
+assert.strictEqual(coalesce.resolveCalls, 0);
+console.log('parallel-host-read-coalesce-stat', coalesce.statCalls, 'read', coalesce.readCalls);
+
+const {
+  truncateQuantumIDEHostToolPayload,
+  parseQuantumIDEHostToolPayloadMeta,
+  utf8ByteLength,
+  QUANTUMIDE_HOST_TOOL_PAYLOAD_MAX_BYTES,
+} = req('vs/platform/quantumide/common/quantumideHostToolPayload.js');
+const oversized = 'z'.repeat(600_000);
+const capped = truncateQuantumIDEHostToolPayload(oversized, 'read_workspace_file');
+assert.strictEqual(capped.truncated, true);
+assert.ok(utf8ByteLength(capped.text) <= QUANTUMIDE_HOST_TOOL_PAYLOAD_MAX_BYTES);
+const capMeta = parseQuantumIDEHostToolPayloadMeta(capped.text);
+assert.ok(capMeta && capMeta.truncated === true);
+console.log('tool-payload-cap-bytes', utf8ByteLength(capped.text), 'original', capMeta.originalBytes);
+
+const {
+  recordQuantumIDEFastPathHit,
+  recordQuantumIDEFastPathMiss,
+  resetQuantumIDEPerfTelemetryForTests,
+  QuantumIDEPerfTelemetryCounter,
+} = req('vs/platform/quantumide/common/quantumidePerfTelemetry.js');
+resetQuantumIDEPerfTelemetryForTests();
+recordQuantumIDEFastPathHit(2);
+recordQuantumIDEFastPathMiss(1);
+const mergedTelemetry = getQuantumIDEWorkspaceDiscoveryTelemetryCounters();
+assert.strictEqual(mergedTelemetry[QuantumIDEPerfTelemetryCounter.FastPathHit], 2);
+assert.strictEqual(mergedTelemetry[QuantumIDEPerfTelemetryCounter.FastPathMiss], 1);
+console.log('perf-telemetry-fast-path', mergedTelemetry[QuantumIDEPerfTelemetryCounter.FastPathHit], mergedTelemetry[QuantumIDEPerfTelemetryCounter.FastPathMiss]);
+
+const {
+  measureQuantumIDEGenerationBumpClearL2L5Ms,
+  QUANTUMIDE_CACHE_GENERATION_CLEAR_BUDGET_MS,
+} = req('vs/platform/quantumide/common/quantumideWorkspaceCacheGenerationPerformance.js');
+const genBump = measureQuantumIDEGenerationBumpClearL2L5Ms();
+assert.ok(genBump.clearDurationMs <= QUANTUMIDE_CACHE_GENERATION_CLEAR_BUDGET_MS);
+assert.strictEqual(genBump.l2After, 0);
+assert.strictEqual(genBump.l5After, 0);
+console.log('cache-generation-bump-clear-ms', genBump.clearDurationMs.toFixed(2));
+
 const entry = toWorkspaceVariableEntry('InnerProsperity/foo.ts', 'foo.ts');
 assert.strictEqual(entry.kind, 'workspace');
 const resolved = resolveQuantumIDEWorkspaceVariablePath(entry.value, [
@@ -188,7 +322,7 @@ const indexedGraph = createEmptyQuantumIDEWorkspaceGraph('w', [{ name: 'R', uri:
 indexedGraph.status.indexed = true;
 const createPlan = planWorkspaceGraphFileWatcherRefresh({ changeCount: 1, graph: indexedGraph });
 assert.strictEqual(createPlan.runIncremental, true);
-assert.strictEqual(createPlan.runDebouncedFullRefresh, true);
+assert.strictEqual(createPlan.runDebouncedFullRefresh, false);
 assert.strictEqual(QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS, 3000);
 
 const { formatQuantumIDEIndexingSyncLog } = req('vs/platform/quantumide/common/quantumideIndexingSyncLog.js');

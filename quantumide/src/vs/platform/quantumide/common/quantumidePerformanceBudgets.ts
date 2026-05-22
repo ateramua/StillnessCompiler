@@ -12,6 +12,8 @@ export const QuantumIDEPerformanceBudgetMs = {
 	semanticRetrieval: 300,
 	diffRendering: 100,
 	incrementalIndexing: 2000,
+	/** AC-01-04: active file / watcher single-file semantic incremental (P95 ≤500ms). */
+	semanticIncrementalFile: 500,
 	multiFileApply: 1000,
 } as const;
 

@@ -69,9 +69,17 @@ import {
 	resolveEffectiveEditVelocity,
 } from '../../../quantumide/common/quantumideWorkflowOptimization.js';
 import { getQuantumIDEIndexingOffDiscoverySystemAddon } from '../../../quantumide/common/quantumideLiteSnapshotContext.js';
+import { resolveQuantumIDEAgentPipelineForTurn } from '../../../quantumide/common/quantumideAgentIntentClassifier.js';
+import { filterOpenAIHostToolsForPipeline, getQuantumIDEFullAgentPipelineSystemAddon, getQuantumIDELiteAgentPipelineSystemAddon, type QuantumIDEAgentPipeline } from '../../../quantumide/common/quantumideAgentPipeline.js';
+import { hasQuantumIDECodebasePipelineSignal } from '../../../quantumide/common/quantumideAgentIntentClassifier.js';
+import { recordQuantumIDEAgentPipeline } from '../../../quantumide/common/quantumideAgentPipelineTelemetry.js';
 import { getQuantumIDEPluginPromptAddons } from '../../../quantumide/common/quantumidePluginRegistry.js';
 import { applyAstAwarePatch } from '../../../quantumide/common/quantumideAstPatch.js';
-import { detectQuantumIDEWorkspaceReadonly } from '../../../quantumide/common/quantumideWorkspaceReadonly.js';
+import {
+	detectQuantumIDEWorkspaceReadonly,
+	tryRejectQuantumIDEReadonlyWriteTool,
+} from '../../../quantumide/common/quantumideWorkspaceReadonly.js';
+import { createQuantumIDEHostAgentRoundFileCache, type IQuantumIDEHostAgentRoundFileCache } from '../../../quantumide/common/quantumideHostAgentRoundFileCache.js';
 import { executeOpenAIHostTool, getOpenAIHostActivityTools, isOpenAIHostTool, isQuantumIDERefactorHostTool, loadWorkspaceLinks, type IOpenAIHostToolContext } from './openaiHostTools.js';
 import { isDangerousQuantumIDETerminalCommand } from '../../../quantumide/common/quantumideSecurity.js';
 import { loadQuantumIDEWorkspacePolicies } from '../../../quantumide/common/quantumideWorkspacePolicies.js';
@@ -79,6 +87,25 @@ import { applyQuantumIDEWorkspaceEdits, formatApplyWorkspaceEditsResult, resolve
 import { OpenAIStreamCoalescer } from './openaiStreamCoalescer.js';
 import { waitQuantumIDEAgentPauseGate } from '../../../quantumide/common/quantumideAgentPauseStore.js';
 import { appendQuantumIDEChatInjectEvent } from '../../../quantumide/common/quantumideChatInjectStore.js';
+import {
+	parseQuantumIDEWorkspaceAgentSnapshot,
+	QUANTUMIDE_AGENT_SNAPSHOT_FILE,
+	type IQuantumIDEWorkspaceAgentSnapshot,
+} from '../../../quantumide/common/quantumideWorkspaceSnapshotBridge.js';
+import { QuantumIDEWorkspaceFastPath } from '../../../quantumide/common/quantumideWorkspaceFastPath.js';
+import { tryQuantumIDEAgentFsSimpleFastLane } from '../../../quantumide/common/quantumideAgentFastLane.js';
+import {
+	profileForQuantumIDEAgentResponseMode,
+	resolveQuantumIDEAgentResponseMode,
+} from '../../../quantumide/common/quantumideAgentResponseMode.js';
+import {
+	QuantumIDEAgentContextTracker,
+} from '../../../quantumide/common/quantumideAgentContextTracker.js';
+import {
+	readQuantumIDEAgentSessionState,
+	writeQuantumIDEAgentSessionState,
+} from '../../../quantumide/common/quantumideAgentSessionStateStore.js';
+import { recordQuantumIDEPerfHistogramSample } from '../../../quantumide/common/quantumidePerfHistogram.js';
 
 interface IOpenAISessionRecord {
 	readonly session: URI;
@@ -98,6 +125,12 @@ interface IOpenAISessionRecord {
 	};
 	currentActivity?: string;
 	activeTurnToolCalls?: Map<string, IOpenAIActiveToolCallState>;
+	/** AC-03-04: cached once per session for O(1) write-tool rejection. */
+	cachedWorkspaceReadonly?: boolean;
+	/** Req-07/10: warmed workspace snapshot + fast path for host tools. */
+	cachedWorkspaceSnapshot?: IQuantumIDEWorkspaceAgentSnapshot;
+	workspaceFastPath?: QuantumIDEWorkspaceFastPath;
+	contextTracker?: QuantumIDEAgentContextTracker;
 }
 
 interface IOpenAIActiveToolCallState {
@@ -264,6 +297,18 @@ const quantumIDEOpenAIConfigSchema = createSchema({
 	[QuantumIDEAISettingId.AgentVelocityHandoffEnabled]: schemaProperty<boolean>({
 		type: 'boolean',
 		title: 'Agent Velocity Handoff Enabled',
+	}),
+	[QuantumIDEAISettingId.AgentPipelineMode]: schemaProperty<string>({
+		type: 'string',
+		title: 'Agent Pipeline Mode',
+	}),
+	[QuantumIDEAISettingId.AgentResponseMode]: schemaProperty<string>({
+		type: 'string',
+		title: 'Agent Response Mode',
+	}),
+	[QuantumIDEAISettingId.AgentFastLaneEnabled]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Agent Fast Lane Enabled',
 	}),
 	[QuantumIDEAISettingId.AgentAutoApplyEdits]: schemaProperty<boolean>({
 		type: 'boolean',
@@ -491,6 +536,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		};
 		if (config?.workingDirectory) {
 			record.workingDirectory = config.workingDirectory;
+			record.cachedWorkspaceReadonly = await this._resolveCachedWorkspaceReadonly(record);
 		}
 		if (project) {
 			record.project = project;
@@ -582,7 +628,26 @@ export class OpenAIAgent extends Disposable implements IAgent {
 				[OpenAISessionConfigKey.ChatMode]: modeFromAttachment,
 			};
 		}
-		this._logService.info(`[OpenAI] turn started session=${sessionStr} turn=${turnId} model=${record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1'} attachments=${attachments.length}`);
+		const contextAttachment = attachments.find(attachment => {
+			const meta = attachment._meta as Record<string, unknown> | undefined;
+			return meta?.source === 'quantumide-workspace-intelligence';
+		});
+		const contextMeta = contextAttachment?._meta as Record<string, unknown> | undefined;
+		const pipelineFromAttachment = contextMeta?.pipeline;
+		const hasCodebaseAttachment = contextMeta?.codebase === true;
+		const pipelineMode = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentPipelineMode);
+		const { pipeline } = resolveQuantumIDEAgentPipelineForTurn(
+			prompt,
+			typeof pipelineMode === 'string' ? pipelineMode : undefined,
+			typeof pipelineFromAttachment === 'string' ? pipelineFromAttachment : undefined,
+			{ hasCodebaseAttachment },
+		);
+		recordQuantumIDEAgentPipeline(pipeline);
+		record.config = {
+			...(record.config ?? {}),
+			[OpenAISessionConfigKey.AgentPipeline]: pipeline,
+		};
+		this._logService.info(`[OpenAI] turn started session=${sessionStr} turn=${turnId} model=${record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1'} pipeline=${pipeline} attachments=${attachments.length}`);
 		this._setSessionActivity(record, session, getAgentStatusActivityLabel('thinking'));
 		this._onDidSessionProgress.fire({
 			kind: 'action',
@@ -608,6 +673,31 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		let assistantTranscript = '';
 		let streamedText = '';
 		try {
+			await this._ensureWorkspaceAgentCaches(record);
+			const responseProfile = this._getAgentResponseModeProfile(record);
+			if (this._isFastLaneEnabled() && responseProfile.allowFastLane) {
+				const fastLane = tryQuantumIDEAgentFsSimpleFastLane(prompt, record.cachedWorkspaceSnapshot);
+				recordQuantumIDEPerfHistogramSample('agent-fast-lane', fastLane.durationMs);
+				if (fastLane.handled && fastLane.response) {
+					streamedText = fastLane.response;
+					assistantTranscript = fastLane.response;
+					this._emitSessionDelta(session, sessionStr, turnId, partId, fastLane.response);
+					await this._appendTranscript(record, { role: 'assistant', content: fastLane.response, timestamp: Date.now() });
+					await this._persistAgentSessionState(record);
+					await this._persistSessionRecord(record);
+					this._setSessionActivity(record, session, undefined);
+					this._onDidSessionProgress.fire({
+						kind: 'action',
+						session,
+						action: {
+							type: ActionType.SessionTurnComplete,
+							session: sessionStr,
+							turnId,
+						},
+					});
+					return;
+				}
+			}
 			const selectedModelId = record.model?.id ?? process.env['QUANTUMIDE_OPENAI_MODEL'] ?? 'gpt-4.1';
 			const selectedRoute = this._resolveModelRoute(selectedModelId);
 			const client = this._createClientForModel(selectedModelId);
@@ -897,12 +987,16 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		});
 	}
 
-	private _getMaxToolIterations(): number {
+	private _getMaxToolIterations(record?: IOpenAISessionRecord): number {
 		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentMaxToolIterations);
+		let max = DEFAULT_OPENAI_MAX_TOOL_ITERATIONS;
 		if (typeof configured === 'number' && configured >= 1 && configured <= 32) {
-			return configured;
+			max = configured;
 		}
-		return DEFAULT_OPENAI_MAX_TOOL_ITERATIONS;
+		if (record) {
+			max = Math.min(max, this._getAgentResponseModeProfile(record).maxToolIterations);
+		}
+		return max;
 	}
 
 	private _getIterateUntilCompleteEnabled(): boolean {
@@ -968,6 +1062,14 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		return configured === 'ship' ? 'ship' : 'dev';
 	}
 
+	private _getAgentPipeline(record: IOpenAISessionRecord): QuantumIDEAgentPipeline {
+		const configured = record.config?.[OpenAISessionConfigKey.AgentPipeline];
+		if (configured === 'lite' || configured === 'standard' || configured === 'full') {
+			return configured;
+		}
+		return 'full';
+	}
+
 	private _getParallelHostToolsEnabled(): boolean {
 		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentVelocityParallelHostTools);
 		return configured !== false;
@@ -998,6 +1100,94 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		});
 	}
 
+	private async _resolveCachedWorkspaceReadonly(record: IOpenAISessionRecord): Promise<boolean> {
+		if (record.cachedWorkspaceReadonly !== undefined) {
+			return record.cachedWorkspaceReadonly;
+		}
+		if (!record.workingDirectory) {
+			record.cachedWorkspaceReadonly = false;
+			return false;
+		}
+		const links = await loadWorkspaceLinks(this._fileService, record.workingDirectory);
+		record.cachedWorkspaceReadonly = await detectQuantumIDEWorkspaceReadonly(this._fileService, record.workingDirectory, links);
+		return record.cachedWorkspaceReadonly;
+	}
+
+	private _tryFastRejectReadonlyWriteTool(record: IOpenAISessionRecord, toolName: string): string | undefined {
+		const autoApplyEdits = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentAutoApplyEdits) === true;
+		return tryRejectQuantumIDEReadonlyWriteTool(toolName, record.cachedWorkspaceReadonly, { autoApplyEdits });
+	}
+
+	private async _ensureWorkspaceAgentCaches(record: IOpenAISessionRecord): Promise<void> {
+		if (record.cachedWorkspaceSnapshot && record.workspaceFastPath) {
+			return;
+		}
+		if (!record.workingDirectory) {
+			return;
+		}
+		try {
+			const raw = (await this._fileService.readFile(joinPath(record.workingDirectory, QUANTUMIDE_AGENT_SNAPSHOT_FILE))).value.toString();
+			const snapshot = parseQuantumIDEWorkspaceAgentSnapshot(raw);
+			if (snapshot) {
+				record.cachedWorkspaceSnapshot = snapshot;
+				const fp = new QuantumIDEWorkspaceFastPath();
+				const paths = snapshot.structureIndex.paths;
+				fp.warmFromGraph({
+					version: 1,
+					workspaceId: snapshot.workspaceId,
+					folders: snapshot.rootNames.map(name => ({ name, uri: `file:///${name}` })),
+					projects: [],
+					manifests: [],
+					files: paths.map(p => ({ uri: p, workspaceRelativePath: p, name: p.split('/').pop() ?? p, extension: '' })),
+					status: { indexed: true, reason: 'agent-snapshot' },
+				});
+				record.workspaceFastPath = fp;
+			}
+		} catch {
+			// snapshot optional
+		}
+		const persisted = await readQuantumIDEAgentSessionState(this._fileService, record.workingDirectory);
+		if (persisted?.contextTracker && !record.contextTracker) {
+			record.contextTracker = QuantumIDEAgentContextTracker.fromState(persisted.contextTracker);
+		}
+		if (!record.contextTracker) {
+			record.contextTracker = new QuantumIDEAgentContextTracker(record.session.toString());
+		}
+		if (record.cachedWorkspaceSnapshot) {
+			record.contextTracker.setGraphGeneration(record.cachedWorkspaceSnapshot.graphGeneration);
+		}
+	}
+
+	private async _persistAgentSessionState(record: IOpenAISessionRecord): Promise<void> {
+		if (!record.workingDirectory || !record.contextTracker) {
+			return;
+		}
+		const responseMode = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentResponseMode);
+		await writeQuantumIDEAgentSessionState(this._fileService, record.workingDirectory, {
+			version: 1,
+			sessionId: record.session.toString(),
+			updatedAt: Date.now(),
+			pipeline: this._getAgentPipeline(record),
+			responseMode: typeof responseMode === 'string' ? responseMode as 'fast' | 'safe' | 'auto' : 'auto',
+			graphGeneration: record.cachedWorkspaceSnapshot?.graphGeneration,
+			contextTracker: record.contextTracker.toState(),
+			summary: record.summary,
+		});
+	}
+
+	private _getAgentResponseModeProfile(record: IOpenAISessionRecord) {
+		const configured = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentResponseMode);
+		const mode = resolveQuantumIDEAgentResponseMode(
+			typeof configured === 'string' ? configured : undefined,
+			this._getAgentPipeline(record),
+		);
+		return profileForQuantumIDEAgentResponseMode(mode, this._getAgentPipeline(record));
+	}
+
+	private _isFastLaneEnabled(): boolean {
+		return this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentFastLaneEnabled) !== false;
+	}
+
 	private async _getHostToolContext(record: IOpenAISessionRecord): Promise<IOpenAIHostToolContext> {
 		const maxScope = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentMaxEditScope);
 		const policies = record.workingDirectory
@@ -1008,9 +1198,8 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			: [];
 		const workflow = this._getWorkflowOptimizationConfig();
 		const ignoreFile = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingIgnoreFile);
-		const workspaceReadonly = record.workingDirectory
-			? await detectQuantumIDEWorkspaceReadonly(this._fileService, record.workingDirectory, workspaceLinks)
-			: false;
+		const workspaceReadonly = await this._resolveCachedWorkspaceReadonly(record);
+		await this._ensureWorkspaceAgentCaches(record);
 		return {
 			crossRootSearch: this._getCrossRootSearchEnabled(),
 			workspaceLinks,
@@ -1031,6 +1220,11 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			verifyOnEdit: workflow.verifyOnEdit,
 			indexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingEnabled) === true,
 			semanticIndexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.SemanticIndexingEnabled) === true,
+			agentPipeline: this._getAgentPipeline(record),
+			workspaceSnapshot: record.cachedWorkspaceSnapshot,
+			workspaceFastPath: record.workspaceFastPath,
+			contextTracker: record.contextTracker,
+			onToolProgress: detail => this._logService.trace(`[OpenAI] tool-progress ${detail}`),
 		};
 	}
 
@@ -1112,14 +1306,15 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		let toolIterations = 0;
 		let timeToFirstActivityMs: number | undefined;
 		let timeToFirstAnswerMs: number | undefined;
-		const maxIterations = this._getMaxToolIterations();
+		const maxIterations = this._getMaxToolIterations(options.record);
 		const mcpToolNameMap = new Map<string, string>();
 		const mcpTools = await loadQuantumIDEMcpOpenAITools(this._fileService, options.record.workingDirectory, mcpToolNameMap);
 		for (const [openAiName, refName] of mcpToolNameMap) {
 			options.clientToolNameMap.set(openAiName, refName);
 		}
+		const agentPipeline = this._getAgentPipeline(options.record);
 		const tools = [
-			...getOpenAIHostActivityTools(),
+			...filterOpenAIHostToolsForPipeline(getOpenAIHostActivityTools(agentPipeline), agentPipeline),
 			...OPENAI_PROPOSAL_TOOLS,
 			...mcpTools,
 			...this._getClientOpenAIToolDefinitions(options.record, options.clientToolNameMap),
@@ -1538,7 +1733,9 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			: 'Refactor tools (extract_method, normalize_imports, etc.) may auto-run compile verification after success when enabled.';
 		const graph = await this._ensureExecutionGraph(record);
 		const graphAddon = graph ? `\n\n${formatExecutionGraphForPrompt(graph)}` : '';
-		const compactPrompt = shouldUseCompactAgentPrompt(workflowConfig);
+		const agentPipeline = this._getAgentPipeline(record);
+		const useLitePipeline = agentPipeline === 'lite';
+		const compactPrompt = useLitePipeline || shouldUseCompactAgentPrompt(workflowConfig);
 		const pluginAddons = compactPrompt ? '' : getQuantumIDEPluginPromptAddons();
 		const cursorParityAddon = !compactPrompt && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatCursorParityEnabled) !== false
 			? `\n\n${getQuantumIDECursorParitySystemAddon()}\n\n${getQuantumIDEChatEightFeaturesPromptAddon()}\n\n${getQuantumIDECursorParitySixPromptAddon()}\n\n${getQuantumIDECursorChatParityProgramPromptAddon()}`
@@ -1557,7 +1754,14 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			? 'Apply edits immediately with apply_workspace_edits; avoid extra search rounds unless necessary.'
 			: lifecycleAddon;
 		const indexingEnabled = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingEnabled) === true;
+		const contextMeta = attachments.find(a => (a._meta as Record<string, unknown> | undefined)?.source === 'quantumide-workspace-intelligence')?._meta as Record<string, unknown> | undefined;
+		const hasCodebaseAttachment = contextMeta?.codebase === true;
+		const useFullCodebasePipeline = agentPipeline === 'full' && hasQuantumIDECodebasePipelineSignal(prompt, hasCodebaseAttachment);
+		const litePipelineAddon = useLitePipeline ? getQuantumIDELiteAgentPipelineSystemAddon() : '';
+		const fullPipelineAddon = useFullCodebasePipeline ? getQuantumIDEFullAgentPipelineSystemAddon() : '';
 		const workflowAddon = `\n\n${getWorkflowOptimizationSystemAddon(workflowConfig)}`
+			+ litePipelineAddon
+			+ fullPipelineAddon
 			+ getQuantumIDEIndexingOffDiscoverySystemAddon(indexingEnabled)
 			+ (!compactPrompt && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatFeatureParityEnabled) !== false
 				? `\n\n${getQuantumIDEChatWorkflowPromptAddon()}`
@@ -1853,6 +2057,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		getActivityStepCount: () => number,
 		addActivitySteps: (count: number) => void,
 	): Promise<string> {
+		const agentRoundFileCache = createQuantumIDEHostAgentRoundFileCache();
 		const summaries: string[] = [];
 		let index = 0;
 		while (index < toolCalls.length) {
@@ -1865,17 +2070,17 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			if (parallelBatch.length > 1) {
 				const started = Date.now();
 				const batchResults = await Promise.all(parallelBatch.map(toolCall =>
-					this._executeSingleToolCall(session, turnId, toolCall, clientToolNameMap, record, getActivityStepCount, addActivitySteps)));
+					this._executeSingleToolCall(session, turnId, toolCall, clientToolNameMap, record, getActivityStepCount, addActivitySteps, agentRoundFileCache)));
 				this._logService.info(`[OpenAI] parallel host tools session=${session.toString()} count=${parallelBatch.length} durationMs=${Date.now() - started}`);
 				summaries.push(...batchResults);
 				continue;
 			}
 			if (parallelBatch.length === 1) {
-				summaries.push(await this._executeSingleToolCall(session, turnId, parallelBatch[0], clientToolNameMap, record, getActivityStepCount, addActivitySteps));
+				summaries.push(await this._executeSingleToolCall(session, turnId, parallelBatch[0], clientToolNameMap, record, getActivityStepCount, addActivitySteps, agentRoundFileCache));
 				continue;
 			}
 			const toolCall = toolCalls[index++];
-			summaries.push(await this._executeSingleToolCall(session, turnId, toolCall, clientToolNameMap, record, getActivityStepCount, addActivitySteps));
+			summaries.push(await this._executeSingleToolCall(session, turnId, toolCall, clientToolNameMap, record, getActivityStepCount, addActivitySteps, agentRoundFileCache));
 		}
 		return summaries.filter(Boolean).join('\n\n');
 	}
@@ -1888,7 +2093,12 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		record: IOpenAISessionRecord,
 		getActivityStepCount: () => number,
 		addActivitySteps: (count: number) => void,
+		agentRoundFileCache?: IQuantumIDEHostAgentRoundFileCache,
 	): Promise<string> {
+		const readonlyReject = this._tryFastRejectReadonlyWriteTool(record, toolCall.name);
+		if (readonlyReject) {
+			return `${toolCall.name} failed: ${readonlyReject}`;
+		}
 		await waitQuantumIDEAgentPauseGate(this._fileService, record.workingDirectory);
 		const args = this._parseToolArguments(toolCall);
 		const activity = getOpenAIActivityLabel(toolCall.name, args, this._getActivityVerbosity());
@@ -1897,7 +2107,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			this._setSessionActivity(record, session, activity.runningLabel);
 		}
 		if (isOpenAIHostTool(toolCall.name)) {
-			return this._executeHostToolCall(session, turnId, toolCall, record, activity, getActivityStepCount);
+			return this._executeHostToolCall(session, turnId, toolCall, record, activity, getActivityStepCount, agentRoundFileCache);
 		}
 		const clientToolName = clientToolNameMap.get(toolCall.name);
 		if (clientToolName) {
@@ -1968,10 +2178,13 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		record.config = { ...(record.config ?? {}), [OpenAISessionConfigKey.ExecutionGraph]: graph };
 	}
 
-	private async _executeHostToolCall(session: URI, turnId: string, toolCall: IOpenAIToolCall, record: IOpenAISessionRecord, activity: ReturnType<typeof getOpenAIActivityLabel>, getActivityStepCount: () => number): Promise<string> {
+	private async _executeHostToolCall(session: URI, turnId: string, toolCall: IOpenAIToolCall, record: IOpenAISessionRecord, activity: ReturnType<typeof getOpenAIActivityLabel>, getActivityStepCount: () => number, agentRoundFileCache?: IQuantumIDEHostAgentRoundFileCache): Promise<string> {
 		const args = this._parseToolArguments(toolCall);
 		await this._syncExecutionGraphForTool(record, toolCall.name, args, 'start');
-		const hostContext = await this._getHostToolContext(record);
+		const hostContext: IOpenAIHostToolContext = {
+			...(await this._getHostToolContext(record)),
+			agentRoundFileCache,
+		};
 		const retryEnabled = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentRetryOnError) !== false;
 		const maxAttempts = retryEnabled ? 3 : 1;
 		const runOnce = async (): Promise<{ ok: boolean; text: string }> => {
@@ -2304,6 +2517,10 @@ export class OpenAIAgent extends Disposable implements IAgent {
 	}
 
 	private async _applyApprovedProposedFileEdit(record: IOpenAISessionRecord, args: Record<string, unknown>): Promise<string> {
+		const readonlyReject = this._tryFastRejectReadonlyWriteTool(record, 'propose_file_edit');
+		if (readonlyReject) {
+			return readonlyReject;
+		}
 		const path = typeof args.path === 'string' ? args.path.trim() : '';
 		const replacement = typeof args.replacement === 'string' ? args.replacement : '';
 		if (!path || !replacement) {

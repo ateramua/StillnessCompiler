@@ -85,6 +85,7 @@ const workerEntryPoints = [
 	'vs/workbench/contrib/notebook/common/services/notebookWebWorkerMain',
 	'vs/workbench/services/languageDetection/browser/languageDetectionWebWorkerMain',
 	'vs/workbench/services/search/worker/localFileSearchMain',
+	'vs/workbench/services/quantumide/browser/worker/quantumideIndexerCpu.workerMain',
 	'vs/workbench/contrib/output/common/outputLinkComputerMain',
 	'vs/workbench/services/textMate/browser/backgroundTokenization/worker/textMateTokenizationWorker.workerMain',
 ];
