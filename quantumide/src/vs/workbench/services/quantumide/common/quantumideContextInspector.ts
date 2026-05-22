@@ -20,7 +20,10 @@ export interface IQuantumIDEContextInspectorService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChange: Event<void>;
 	getSections(): readonly IQuantumIDEContextInspectorSection[];
+	getOmittedSectionIds(): readonly string[];
 	getLastBuiltAt(): number | undefined;
+	isContextStale(): boolean;
+	markContextStale(): void;
 	recordBuild(sections: readonly IQuantumIDEContextInspectorSection[]): void;
 	clear(): void;
 }

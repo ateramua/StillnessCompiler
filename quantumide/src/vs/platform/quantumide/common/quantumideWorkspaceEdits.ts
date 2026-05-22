@@ -14,6 +14,8 @@ import { validateSourceSyntax } from './quantumideSyntaxValidate.js';
 import { assertWithinBudget, QuantumIDEPerformanceBudgetMs } from './quantumidePerformanceBudgets.js';
 import { isQuantumIDEAgentWritePathAllowed } from './quantumideSecurity.js';
 import type { IQuantumIDEWorkspacePolicies } from './quantumideWorkspacePolicies.js';
+import { resolvePathAcrossWorkspaceRoots } from './quantumideWorkspaceRoots.js';
+import type { IQuantumIDEWorkspaceLink } from './workspaceLinks.js';
 
 export const QUANTUMIDE_EDIT_CHECKPOINTS_DIR = '.quantumide/edit-checkpoints';
 
@@ -30,10 +32,15 @@ export interface IQuantumIDEApplyWorkspaceEditsOptions {
 	readonly maxEdits?: number;
 	readonly createCheckpoints?: boolean;
 	readonly workingDirectory?: URI;
+	readonly workspaceLinks?: readonly IQuantumIDEWorkspaceLink[];
 	/** When true (default), roll back all writes if any edit fails (§2.4 atomic workflow). */
 	readonly atomic?: boolean;
 	readonly validateSyntax?: boolean;
 	readonly policies?: IQuantumIDEWorkspacePolicies;
+	/** Skip readFile before write (faster; use when replacement is a full file body). */
+	readonly skipReadBeforeWrite?: boolean;
+	/** Skip preserveFormattingStyle merge (faster writes). */
+	readonly skipPreserveFormatting?: boolean;
 }
 
 export interface IQuantumIDEApplyWorkspaceEditsResult {
@@ -72,14 +79,12 @@ async function writeEditCheckpoint(
 	return id;
 }
 
-export function resolveQuantumIDEWorkspacePath(workingDirectory: URI | undefined, pathArg: string): URI {
-	if (/^[a-zA-Z]:[\\/]/.test(pathArg) || pathArg.startsWith('/')) {
-		return URI.file(pathArg);
-	}
-	if (workingDirectory) {
-		return joinPath(workingDirectory, pathArg);
-	}
-	return URI.file(pathArg);
+export function resolveQuantumIDEWorkspacePath(
+	workingDirectory: URI | undefined,
+	pathArg: string,
+	workspaceLinks: readonly IQuantumIDEWorkspaceLink[] = [],
+): URI {
+	return resolvePathAcrossWorkspaceRoots(workingDirectory, workspaceLinks, pathArg);
 }
 
 export function parseWorkspaceEditsArg(args: Record<string, unknown>): { summary?: string; edits: IQuantumIDEWorkspaceEdit[] } {
@@ -134,7 +139,7 @@ export async function applyQuantumIDEWorkspaceEdits(
 	const rollbackCheckpoints: { checkpointId: string; path: string }[] = [];
 	const start = performance.now();
 	for (const edit of edits) {
-		const resource = resolveQuantumIDEWorkspacePath(workingDirectory, edit.path);
+		const resource = resolveQuantumIDEWorkspacePath(workingDirectory, edit.path, options.workspaceLinks ?? []);
 		if (options.policies?.restrictFilesystemToWorkspace !== false
 			&& !isQuantumIDEAgentWritePathAllowed(workingDirectory, resource, options.policies)) {
 			errors.push(`${edit.path}: blocked by workspace security policy.`);
@@ -174,11 +179,13 @@ export async function applyQuantumIDEWorkspaceEdits(
 			}
 			let priorContent: string | undefined;
 			let fileEncoding: ReturnType<typeof decodeQuantumIDEFileBuffer>['encoding'] = 'utf8';
-			if (exists) {
+			const needsPrior = exists && (options.createCheckpoints !== false
+				|| (edit.operation === 'write' && options.skipPreserveFormatting !== true));
+			if (needsPrior && options.skipReadBeforeWrite !== true) {
 				const decoded = decodeQuantumIDEFileBuffer((await fileService.readFile(resource)).value);
 				priorContent = decoded.text;
 				fileEncoding = decoded.encoding;
-				if (edit.operation === 'write') {
+				if (edit.operation === 'write' && options.skipPreserveFormatting !== true) {
 					content = preserveFormattingStyle(priorContent, content);
 				}
 			}

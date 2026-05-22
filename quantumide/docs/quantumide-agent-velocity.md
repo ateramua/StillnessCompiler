@@ -23,11 +23,17 @@ Markdown rule files merged into agent context when `attachRules` is enabled.
 
 ```json
 {
+  "version": 1,
   "roots": [
-    { "name": "StillnessCompiler", "path": "/absolute/path/to/StillnessCompiler" }
+    { "name": "FocusForge", "path": "/absolute/path/to/StillnessCompiler" }
   ]
 }
 ```
+
+| Field | Meaning |
+|-------|---------|
+| `name` | **Display name** used in agent prompts, @ mentions (`FocusForge/src/foo.ts`), and cross-root resolution (MP-06). May differ from the on-disk folder name in VS Code. |
+| `path` | Canonical absolute `fsPath` for the linked root. |
 
 Enables cross-root `search_workspace_text` / `search_workspace_text_batch` when `crossRootSearch` is on.
 
@@ -49,7 +55,11 @@ Updated automatically when the assistant reply includes markdown checklist items
 |------|-------------|
 | `search_workspace_text` | Ripgrep (or scan fallback); optional multi-root |
 | `search_workspace_text_batch` | Parallel queries in one call |
-| `read_workspace_file` | Read with optional line range |
+| `file_search` | Cursor parity alias — fuzzy path search (`search_workspace_files`) |
+| `search_workspace_files` | Fuzzy file path discovery |
+| `list_workspace_directory` | List directory entries (respects ignore files) |
+| `search_semantic_workspace` | Semantic index + text fallback; `target_directories` globs |
+| `read_workspace_file` | Read with optional line range; large files stream first 512KB |
 | `list_workspace_symbols` | Lightweight symbol list |
 | `run_workspace_check` | `compile` → `npm run compile`; `verify` → `scripts/agent-verify.sh`; `custom` → script path |
 

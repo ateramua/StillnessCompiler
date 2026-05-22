@@ -18,6 +18,7 @@ import { ILabelService } from '../../platform/label/common/label.js';
 import { isQuantumIDEProduct } from '../../platform/quantumide/common/quantumideChatPlatform.js';
 import { QuantumIDEAISettingId } from '../../platform/quantumide/common/quantumideAISettings.js';
 import { quantumideFuzzyMatchFilePaths } from '../../platform/quantumide/common/quantumideFuzzyFileMatch.js';
+import { isQuantumIDEPathIgnored } from '../../platform/quantumide/common/quantumideWorkspaceIgnore.js';
 import product from '../../platform/product/common/product.js';
 import { ILanguageFeaturesService } from '../../editor/common/services/languageFeatures.js';
 import { ICodeEditorService } from '../../editor/browser/services/codeEditorService.js';
@@ -28,8 +29,11 @@ import { ChatDynamicVariableModel } from '../contrib/chat/browser/attachments/ch
 import { IChatWidget, IChatWidgetService } from '../contrib/chat/browser/chat.js';
 import { chatVariableLeader } from '../contrib/chat/common/requestParser/chatParserTypes.js';
 import { computeCompletionRanges, escapeForCharClass } from '../contrib/chat/browser/widget/input/editor/chatInputCompletionUtils.js';
+import { toWorkspaceVariableEntry } from '../contrib/chat/common/attachments/chatVariableEntries.js';
 import type { IDynamicVariable } from '../contrib/chat/common/attachments/chatVariables.js';
+import { formatWorkspaceFolderLinks, resolveWorkspaceGraphPath } from '../../platform/quantumide/common/quantumideWorkspaceRoots.js';
 import { IQuantumIDEWorkspaceContextService } from '../services/quantumide/common/quantumideWorkspaceContext.js';
+import { IQuantumIDEWorkspaceIgnoreService } from '../services/quantumide/common/quantumideWorkspaceIgnoreService.js';
 
 function isQuantumIDE(): boolean {
 	return isQuantumIDEProduct(product.applicationName)
@@ -44,11 +48,16 @@ interface IInsertAttachmentArgs {
 class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.quantumideChatAtMention';
 
+	/** Warm graph paths filtered by ignore policy (§11: avoid per-keystroke async ignore checks). */
+	private _warmPathsCacheKey: string | undefined;
+	private _warmPathsCache: readonly string[] | undefined;
+
 	constructor(
 		@ILanguageFeaturesService languageFeaturesService: ILanguageFeaturesService,
 		@IChatWidgetService private readonly _chatWidgetService: IChatWidgetService,
 		@IWorkspaceContextService private readonly _workspace: IWorkspaceContextService,
 		@IQuantumIDEWorkspaceContextService private readonly _ctx: IQuantumIDEWorkspaceContextService,
+		@IQuantumIDEWorkspaceIgnoreService private readonly _ignore: IQuantumIDEWorkspaceIgnoreService,
 		@ILabelService private readonly _labelService: ILabelService,
 		@ICodeEditorService private readonly _codeEditorService: ICodeEditorService,
 		@IEditorService private readonly _editorService: IEditorService,
@@ -59,9 +68,28 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 			return;
 		}
 
+		this._register(this._ctx.onDidChangeGraph(() => {
+			this._warmPathsCacheKey = undefined;
+			this._warmPathsCache = undefined;
+		}));
+		this._register(this._configuration.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(QuantumIDEAISettingId.IndexingIgnoreFile)
+				|| e.affectsConfiguration(QuantumIDEAISettingId.IndexingExcludePatterns)) {
+				this._warmPathsCacheKey = undefined;
+				this._warmPathsCache = undefined;
+			}
+		}));
+
 		this._register(CommandsRegistry.registerCommand('quantumide.chat.insertAttachment', (_accessor: ServicesAccessor, args: IInsertAttachmentArgs) => {
 			const widget = this._chatWidgetService.getWidgetBySessionResource(URI.parse(args.sessionResource));
-			widget?.getContrib<ChatDynamicVariableModel>(ChatDynamicVariableModel.ID)?.addReference(args.variable);
+			if (!widget) {
+				return;
+			}
+			widget.getContrib<ChatDynamicVariableModel>(ChatDynamicVariableModel.ID)?.addReference(args.variable);
+			const workspaceRelativePath = args.variable._meta?.workspaceRelativePath;
+			if (typeof workspaceRelativePath === 'string' && workspaceRelativePath.trim()) {
+				widget.input.attachmentModel.addContext(toWorkspaceVariableEntry(workspaceRelativePath, args.variable.fullName ?? workspaceRelativePath));
+			}
 		}));
 
 		const atPattern = /@[^\s#]*/g;
@@ -124,16 +152,42 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 					},
 				});
 			}
-			const paths = this._ctx.getWorkspaceGraph()?.files.map(f => f.workspaceRelativePath) ?? [];
+			if (!query || 'codebase'.startsWith(query)) {
+				const codebaseText = `${chatVariableLeader}codebase `;
+				result.suggestions.push({
+					label: { label: '@codebase', description: localize('quantumide.at.codebase', 'Search the codebase (semantic + text)') },
+					insertText: codebaseText,
+					range,
+					kind: CompletionItemKind.Keyword,
+					sortText: '0b',
+					command: {
+						id: 'quantumide.chat.insertAttachment',
+						title: '',
+						arguments: [{
+							sessionResource: widget.viewModel?.sessionResource?.toString() ?? '',
+							variable: {
+								id: 'quantumide.codebase',
+								range: { startLineNumber: range.replace.startLineNumber, startColumn: range.replace.startColumn, endLineNumber: range.replace.endLineNumber, endColumn: range.replace.startColumn + codebaseText.length },
+								fullName: 'codebase',
+								isFile: false,
+								data: { triggerSemanticSearch: true },
+							},
+						} satisfies IInsertAttachmentArgs],
+					},
+				});
+			}
+			const links = formatWorkspaceFolderLinks(this._workspace.getWorkspace().folders.map(f => ({ name: f.name, uri: f.uri })));
+			const paths = await this._getWarmAtMentionPaths();
+			const primary = this._workspace.getWorkspace().folders[0]?.uri;
 			for (const m of quantumideFuzzyMatchFilePaths(query, paths, 20)) {
 				if (token.isCancellationRequested) {
 					break;
 				}
-				const folder = this._workspace.getWorkspace().folders[0];
-				if (!folder) {
+				const uri = resolveWorkspaceGraphPath(m.path, links, primary);
+				if (!uri) {
 					continue;
 				}
-				result.suggestions.push(this._fileSuggestion(widget, range, `${chatVariableLeader}file:${basename(m.path)}`, URI.joinPath(folder.uri, m.path), m.path, '2'));
+				result.suggestions.push(this._fileSuggestion(widget, range, `${chatVariableLeader}file:${basename(m.path)}`, uri, m.path, '2', m.path));
 			}
 			return result;
 		});
@@ -142,21 +196,41 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 			const result: CompletionList = { suggestions: [] };
 			const raw = range.varWord?.word ?? '';
 			const query = raw.replace(new RegExp(`^${escapeForCharClass(chatVariableLeader)}qide:`), '').toLowerCase();
-			const folder = this._workspace.getWorkspace().folders[0];
-			if (!folder) {
-				return result;
-			}
-			const qPaths = this._ctx.getWorkspaceGraph()?.files.map(f => f.workspaceRelativePath) ?? [];
+			const links = formatWorkspaceFolderLinks(this._workspace.getWorkspace().folders.map(f => ({ name: f.name, uri: f.uri })));
+			const qPaths = await this._getWarmAtMentionPaths();
+			const primary = this._workspace.getWorkspace().folders[0]?.uri;
 			for (const m of quantumideFuzzyMatchFilePaths(query, qPaths, 15)) {
 				const path = m.path;
 				if (token.isCancellationRequested) {
 					break;
 				}
+				const uri = resolveWorkspaceGraphPath(path, links, primary);
+				if (!uri) {
+					continue;
+				}
 				const text = `${chatVariableLeader}qide:${path}`;
-				result.suggestions.push(this._fileSuggestion(widget, range, text, URI.joinPath(folder.uri, path), path, '1'));
+				result.suggestions.push(this._fileSuggestion(widget, range, text, uri, path, '1', path));
 			}
 			return result;
 		});
+	}
+
+	private async _getWarmAtMentionPaths(): Promise<readonly string[]> {
+		const graph = this._ctx.getWorkspaceGraph();
+		const cacheKey = `${graph?.status.generatedAt ?? 'none'}:${graph?.files.length ?? 0}`;
+		if (this._warmPathsCacheKey === cacheKey && this._warmPathsCache) {
+			return this._warmPathsCache;
+		}
+		const policy = await this._ignore.getPolicy();
+		const paths: string[] = [];
+		for (const file of graph?.files ?? []) {
+			if (!isQuantumIDEPathIgnored(file.workspaceRelativePath, policy, 'ai', file.name)) {
+				paths.push(file.workspaceRelativePath);
+			}
+		}
+		this._warmPathsCacheKey = cacheKey;
+		this._warmPathsCache = paths;
+		return paths;
 	}
 
 	private _fileSuggestion(
@@ -166,7 +240,9 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 		uri: URI,
 		description: string,
 		sort: string,
+		workspaceRelativePath?: string,
 	) {
+		const meta = workspaceRelativePath ? { workspaceRelativePath } : undefined;
 		return {
 			label: { label: text, description },
 			insertText: `${text} `,
@@ -185,6 +261,7 @@ class QuantumIDEChatAtMentionContribution extends Disposable implements IWorkben
 						fullName: basename(uri.fsPath),
 						isFile: true,
 						data: uri,
+						_meta: meta,
 					},
 				} satisfies IInsertAttachmentArgs],
 			},

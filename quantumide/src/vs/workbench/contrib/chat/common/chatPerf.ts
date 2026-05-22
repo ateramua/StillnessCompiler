@@ -6,6 +6,10 @@
 import { mark, clearMarks } from '../../../../base/common/performance.js';
 import { URI } from '../../../../base/common/uri.js';
 import { chatSessionResourceToId } from './model/chatUri.js';
+import { clearChatPerfInstrumentationSession, notifyChatPerfMark, type IChatPerfMarkMeta } from './chatPerfInstrumentation.js';
+import { ChatGlobalPerfMark, ChatPerfMark } from './chatPerfMarks.js';
+
+export { ChatGlobalPerfMark, ChatPerfMark };
 
 const chatPerfPrefix = 'code/chat/';
 
@@ -18,6 +22,9 @@ const chatMarksBySession = new Map<string, Set<string>>();
  * without defining what scenario they belong to.
  *
  * ## Scenarios
+ *
+ * **Context build** (QuantumIDE workspace discovery on send):
+ *   `context/buildWillStart` → `context/buildDidComplete`
  *
  * **Time to UI Feedback** (perceived input lag):
  *   `request/start` → `request/uiUpdated`
@@ -37,26 +44,14 @@ const chatMarksBySession = new Map<string, Set<string>>();
  *
  * **Agent Invocation Time** (LLM round-trip):
  *   `agent/willInvoke` → `agent/didInvoke`
+ *
+ * **QuantumIDE instrumentation** (see chatPerfInstrumentation.ts):
+ *   - `request/apiSent` — provider HTTP/stream opened
+ *   - `stream/chunkReceived` — progress callback chunk
+ *   - `render/chunk` — list renderer incremental pass
+ *   - `render/messageComplete` — response row fully painted
+ *   - `render/uiReflow` — post-render layout / jank probe
  */
-export const ChatPerfMark = {
-	/** User pressed Enter / request initiated */
-	RequestStart: 'request/start',
-	/** Request added to model → UI shows the message */
-	RequestUiUpdated: 'request/uiUpdated',
-	/** Begin collecting .instructions.md / skills / hooks */
-	WillCollectInstructions: 'request/willCollectInstructions',
-	/** Done collecting instructions */
-	DidCollectInstructions: 'request/didCollectInstructions',
-	/** First streamed response content received */
-	FirstToken: 'request/firstToken',
-	/** Response fully complete */
-	RequestComplete: 'request/complete',
-	/** Agent invoke begins (LLM round-trip start) */
-	AgentWillInvoke: 'agent/willInvoke',
-	/** Agent invoke returns (LLM round-trip end) */
-	AgentDidInvoke: 'agent/didInvoke',
-} as const;
-
 /**
  * Emits a performance mark scoped to a chat session:
  * `code/chat/<sessionResource>/<name>`
@@ -64,7 +59,7 @@ export const ChatPerfMark = {
  * Marks are automatically cleaned up when the corresponding chat model is
  * disposed — see {@link clearChatMarks}.
  */
-export function markChat(sessionResource: URI, name: string): void {
+export function markChat(sessionResource: URI, name: string, meta?: IChatPerfMarkMeta): void {
 	const sessionId = chatSessionResourceToId(sessionResource);
 	const fullName = `${chatPerfPrefix}${sessionId}/${name}`;
 	let names = chatMarksBySession.get(sessionId);
@@ -74,6 +69,7 @@ export function markChat(sessionResource: URI, name: string): void {
 	}
 	names.add(fullName);
 	mark(fullName);
+	notifyChatPerfMark(sessionResource, name, meta);
 }
 
 /**
@@ -89,19 +85,13 @@ export function clearChatMarks(sessionResource: URI): void {
 		}
 		chatMarksBySession.delete(sessionId);
 	}
+	clearChatPerfInstrumentationSession(sessionResource);
 }
 
 /**
  * Well-defined one-time global perf marks (not scoped to a session).
  * These are emitted via {@link markChatGlobal} and are never cleared.
  */
-export const ChatGlobalPerfMark = {
-	/** Begin waiting for chat extension activation (SetupAgent) */
-	WillWaitForActivation: 'willWaitForActivation',
-	/** Extension activation + readiness complete (SetupAgent) */
-	DidWaitForActivation: 'didWaitForActivation',
-} as const;
-
 /**
  * Emits a global (non-session-scoped) performance mark:
  * `code/chat/<name>`

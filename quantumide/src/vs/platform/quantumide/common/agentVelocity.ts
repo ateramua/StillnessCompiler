@@ -22,6 +22,8 @@ export const READONLY_OPENAI_HOST_TOOLS = new Set<string>([
 	'resolve_import_dependencies',
 	'search_semantic_workspace',
 	'search_vector_workspace',
+	'list_workspace_directory',
+	'search_workspace_files',
 	'query_dependency_graph',
 	'find_implementations',
 	'normalize_imports',
@@ -50,9 +52,9 @@ export function getAgentVelocityProfileSystemAddon(profile: QuantumIDEAgentVeloc
 		return [
 			'',
 			'Agent Velocity (ship profile):',
-			'- Prefer small, reviewable diffs and run `run_workspace_check` with check `verify` before claiming work is done.',
+			'- Apply file changes with `apply_workspace_edits` in one call; do not run full-repo compile unless the user asks or you edited TypeScript/JavaScript sources.',
 			'- Use `search_workspace_text_batch` for multiple search terms in one round instead of serial greps.',
-			'- Read only the files you need; avoid broad directory scans.',
+			'- Read only the files you need; avoid broad directory scans and extra tool rounds.',
 		].join('\n');
 	}
 	return [

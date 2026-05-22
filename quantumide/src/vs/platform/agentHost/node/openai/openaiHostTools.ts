@@ -11,12 +11,31 @@ import {
 	QUANTUMIDE_WORKSPACE_LINKS_FILE,
 	type QuantumIDEAgentVelocityProfile,
 } from '../../../quantumide/common/agentVelocity.js';
-import { parseWorkspaceLinksJson } from '../../../quantumide/common/workspaceLinks.js';
+import { parseWorkspaceLinksJson, type IQuantumIDEWorkspaceLink } from '../../../quantumide/common/workspaceLinks.js';
+import {
+	collectAgentSearchRoots,
+	formatWorkspaceRootsForAgent,
+	relativePathInWorkspaceRoots,
+	resolvePathAcrossWorkspaceRoots,
+} from '../../../quantumide/common/quantumideWorkspaceRoots.js';
+import { quantumideFuzzyMatchFilePaths } from '../../../quantumide/common/quantumideFuzzyFileMatch.js';
+import {
+	isQuantumIDEPathIgnored,
+	QUANTUMIDE_IGNORE_FILE,
+	type IQuantumIDEWorkspaceIgnorePolicy,
+} from '../../../quantumide/common/quantumideWorkspaceIgnore.js';
+import { loadQuantumIDEWorkspaceIgnorePolicy } from '../../../quantumide/common/quantumideWorkspaceIgnoreLoader.js';
+import { formatQuantumIDEWorkspaceDiscoveryLog } from '../../../quantumide/common/quantumideWorkspaceDiscoveryLog.js';
+import { searchQuantumIDEWorkspaceTextWithRipgrep } from '../quantumideWorkspaceTextSearch.js';
+import {
+	assertQuantumIDEWorkspaceWritableForTool,
+	isQuantumIDEWorkspaceFileMutatingHostTool,
+} from '../../../quantumide/common/quantumideWorkspaceReadonly.js';
+import { recordQuantumIDESemanticSearchLatency } from '../../../quantumide/common/quantumideWorkspaceDiscoveryTelemetry.js';
 import {
 	applyQuantumIDEWorkspaceEdits,
 	formatApplyWorkspaceEditsResult,
 	parseWorkspaceEditsArg,
-	resolveQuantumIDEWorkspacePath,
 } from '../../../quantumide/common/quantumideWorkspaceEdits.js';
 import { detectEditConflicts, suggestDependentPaths } from '../../../quantumide/common/quantumideEditEngine.js';
 import { buildTypeHierarchy, formatTypeHierarchy } from '../../../quantumide/common/quantumideTypeHierarchy.js';
@@ -42,10 +61,19 @@ import {
 	QUANTUMIDE_AST_INDEX_FILE,
 	QUANTUMIDE_DEPENDENCY_GRAPH_FILE,
 	QUANTUMIDE_SEMANTIC_INDEX_FILE,
+	QUANTUMIDE_SYMBOL_INDEX_FILE,
 	QUANTUMIDE_VECTOR_INDEX_FILE,
 	parseSemanticIndexJson,
 	searchSemanticIndex,
+	type IQuantumIDEAstSymbolEntry,
 } from '../../../quantumide/common/quantumideSemanticIndex.js';
+import {
+	formatSemanticSearchHitLine,
+	loadQuantumIDEPersistedSemanticIndexes,
+} from '../../../quantumide/common/quantumideSemanticIndexFeed.js';
+import { formatQuantumIDEIndexingOffToolFallback } from '../../../quantumide/common/quantumideLiteSnapshotContext.js';
+import { filterPathsByTargetDirectories } from '../../../quantumide/common/quantumideSemanticSearchPaths.js';
+import { readQuantumIDEIndexingStatus } from '../../../quantumide/common/quantumideIndexingStatusStore.js';
 import {
 	QUANTUMIDE_COMMENTS_INDEX_FILE,
 	QUANTUMIDE_DIAGNOSTICS_INDEX_FILE,
@@ -73,6 +101,7 @@ import { applyUnifiedPatchToFile, restoreEditCheckpoint } from '../../../quantum
 import {
 	detectQuantumIDEManifestKind,
 	QuantumIDEManifestNames,
+	QuantumIDEWorkspaceIndexExcludeNames,
 } from '../../../quantumide/common/quantumideWorkspaceGraph.js';
 import {
 	formatProjectManifestSummaries,
@@ -84,15 +113,42 @@ import {
 } from '../../../quantumide/common/quantumideTestDiscovery.js';
 import type { IOpenAIToolDefinition } from './openAiClient.js';
 import { executeQuantumIDEHostWorkflowTool, QUANTUMIDE_HOST_WORKFLOW_TOOLS } from './quantumideHostWorkflowTools.js';
+import { appendDeferredVerification } from '../../../quantumide/common/quantumideDeferredVerificationStore.js';
+import { getIndexingGateMessage } from '../../../quantumide/common/quantumideIndexingStatusStore.js';
+import {
+	formatBatchApplySummary,
+	isDocumentationPath,
+	resolveApplyWorkspaceEditsOptions,
+	resolveEffectiveEditVelocity,
+	shouldPreferDirectEditorEdit,
+	type QuantumIDEAgentEditVelocity,
+	type QuantumIDEAgentVerifyOnEdit,
+} from '../../../quantumide/common/quantumideWorkflowOptimization.js';
 
 export interface IOpenAIHostToolContext {
 	readonly crossRootSearch?: boolean;
+	/** Synced from VS Code workspace folders via `.quantumide/workspace-links.json`. */
+	readonly workspaceLinks?: readonly IQuantumIDEWorkspaceLink[];
 	readonly velocityProfile?: QuantumIDEAgentVelocityProfile;
 	readonly autoApplyEdits?: boolean;
 	readonly requireDeleteConfirmation?: boolean;
 	readonly maxEditScope?: number;
 	readonly workspacePolicies?: IQuantumIDEWorkspacePolicies;
 	readonly privacyLocalIndexingOnly?: boolean;
+	readonly fastApplyEdits?: boolean;
+	readonly editVelocity?: import('../../../quantumide/common/quantumideWorkflowOptimization.js').QuantumIDEAgentEditVelocity;
+	readonly waitForIndexingBeforeEdits?: boolean;
+	/** Unified ignore file name from `quantumide.ai.ignoreFile` (SEC-06). */
+	readonly ignoreFile?: string;
+	readonly preferDirectEditorEdits?: boolean;
+	readonly directEditorMaxLines?: number;
+	readonly preferLspRename?: boolean;
+	readonly verifyOnEdit?: QuantumIDEAgentVerifyOnEdit;
+	/** When false, index-backed search tools fall back to text/path discovery (§11). */
+	readonly indexingEnabled?: boolean;
+	readonly semanticIndexingEnabled?: boolean;
+	/** SEC-05: VS Code / provider read-only workspace — discovery reads OK, file writes blocked. */
+	readonly workspaceReadonly?: boolean;
 }
 
 export const OPENAI_HOST_ACTIVITY_TOOLS: readonly IOpenAIToolDefinition[] = [
@@ -146,6 +202,53 @@ export const OPENAI_HOST_ACTIVITY_TOOLS: readonly IOpenAIToolDefinition[] = [
 					maxChars: { type: 'number', description: 'Maximum characters to return (default 12000).' },
 				},
 				required: ['path'],
+				additionalProperties: false,
+			},
+		},
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'list_workspace_directory',
+			description: 'List files and subdirectories in a workspace directory (relative path). Use before targeted reads on unfamiliar layouts.',
+			parameters: {
+				type: 'object',
+				properties: {
+					path: { type: 'string', description: 'Workspace-relative directory path (default ".").' },
+					maxEntries: { type: 'number', description: 'Maximum entries to return (default 80).' },
+				},
+				additionalProperties: false,
+			},
+		},
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'file_search',
+			description: 'Cursor parity alias: fuzzy search workspace file paths by filename or path fragment (same as search_workspace_files).',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: { type: 'string', description: 'Partial file name or path to match.' },
+					maxResults: { type: 'number', description: 'Maximum paths to return (default 10).' },
+				},
+				required: ['query'],
+				additionalProperties: false,
+			},
+		},
+	},
+	{
+		type: 'function',
+		function: {
+			name: 'search_workspace_files',
+			description: 'Fuzzy search workspace file paths by filename or path fragment. Returns up to 10 matching relative paths.',
+			parameters: {
+				type: 'object',
+				properties: {
+					query: { type: 'string', description: 'Partial file name or path to match.' },
+					maxResults: { type: 'number', description: 'Maximum paths to return (default 10).' },
+				},
+				required: ['query'],
 				additionalProperties: false,
 			},
 		},
@@ -456,12 +559,17 @@ export const OPENAI_HOST_ACTIVITY_TOOLS: readonly IOpenAIToolDefinition[] = [
 		type: 'function',
 		function: {
 			name: 'search_semantic_workspace',
-			description: 'Semantic (TF-IDF) search over the indexed workspace. Run reindex if results are empty.',
+			description: 'Semantic (TF-IDF) search over the indexed workspace. Falls back to search_workspace_text when index is unavailable. Optional target_directories globs narrow results.',
 			parameters: {
 				type: 'object',
 				properties: {
 					query: { type: 'string', description: 'Natural language or keyword query.' },
 					maxResults: { type: 'number', description: 'Maximum results (default 15).' },
+					target_directories: {
+						type: 'array',
+						items: { type: 'string' },
+						description: 'Optional directory prefixes to limit search (e.g. src/, StillnessCompiler/).',
+					},
 				},
 				required: ['query'],
 				additionalProperties: false,
@@ -695,7 +803,51 @@ const DEFAULT_MAX_SYMBOLS = 40;
 const DEFAULT_MAX_READ_CHARS = 12_000;
 const MAX_FILES_TO_SCAN = 400;
 const MAX_VERIFY_OUTPUT_CHARS = 24_000;
-const VERIFY_TIMEOUT_MS = 600_000;
+/** Cap compile/lint so a single agent verify cannot block for 20+ minutes. */
+const VERIFY_TIMEOUT_MS = 180_000;
+
+const hostIgnorePolicyCache = new Map<string, IQuantumIDEWorkspaceIgnorePolicy>();
+
+async function getHostIgnorePolicy(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	context: IOpenAIHostToolContext,
+): Promise<IQuantumIDEWorkspaceIgnorePolicy> {
+	const links = context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []);
+	const roots = collectAgentSearchRoots(workingDirectory, links);
+	const key = roots.map(r => r.fsPath).join('|') || 'none';
+	let policy = hostIgnorePolicyCache.get(key);
+	if (!policy) {
+		policy = await loadQuantumIDEWorkspaceIgnorePolicy(fileService, roots, QuantumIDEWorkspaceIndexExcludeNames, [], {
+			unifiedIgnoreFile: context.ignoreFile,
+		});
+		hostIgnorePolicyCache.set(key, policy);
+	}
+	return policy;
+}
+
+async function resolveWorkspacePathForHost(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	pathArg: string,
+	context: IOpenAIHostToolContext,
+	mode: 'read' | 'list',
+): Promise<URI> {
+	const links = context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []);
+	const resource = resolveWorkspacePath(workingDirectory, pathArg, { ...context, workspaceLinks: links });
+	const roots = collectAgentSearchRoots(workingDirectory, links);
+	const rel = relativePathInWorkspaceRoots(resource, roots) ?? pathArg;
+	const policy = await getHostIgnorePolicy(fileService, workingDirectory, context);
+	if (isQuantumIDEPathIgnored(rel, policy, 'ai', resource.path.split('/').pop())) {
+		throw new Error(`Path is blocked by ${QUANTUMIDE_IGNORE_FILE} or workspace ignore policy: ${pathArg}`);
+	}
+	console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+		component: mode === 'read' ? 'agent-read' : 'agent-search',
+		operation: 'resolve-path',
+		matchCount: 1,
+	}));
+	return resource;
+}
 
 export async function executeOpenAIHostTool(
 	fileService: IFileService,
@@ -704,15 +856,33 @@ export async function executeOpenAIHostTool(
 	args: Record<string, unknown>,
 	context: IOpenAIHostToolContext = {},
 ): Promise<string> {
+	const enrichedContext: IOpenAIHostToolContext = {
+		...context,
+		workspaceLinks: context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []),
+	};
+	if (isQuantumIDEWorkspaceFileMutatingHostTool(toolName, { autoApplyEdits: enrichedContext.autoApplyEdits })) {
+		await assertQuantumIDEWorkspaceWritableForTool(
+			fileService,
+			workingDirectory,
+			enrichedContext.workspaceLinks,
+			toolName,
+			enrichedContext.workspaceReadonly,
+		);
+	}
 	switch (toolName) {
 		case 'search_workspace_text':
-			return searchWorkspaceText(fileService, workingDirectory, args, context);
+			return searchWorkspaceText(fileService, workingDirectory, args, enrichedContext);
 		case 'search_workspace_text_batch':
-			return searchWorkspaceTextBatch(fileService, workingDirectory, args, context);
+			return searchWorkspaceTextBatch(fileService, workingDirectory, args, enrichedContext);
 		case 'read_workspace_file':
-			return readWorkspaceFile(fileService, workingDirectory, args);
+			return readWorkspaceFile(fileService, workingDirectory, args, enrichedContext);
+		case 'list_workspace_directory':
+			return listWorkspaceDirectory(fileService, workingDirectory, args, enrichedContext);
+		case 'file_search':
+		case 'search_workspace_files':
+			return searchWorkspaceFiles(fileService, workingDirectory, args, enrichedContext);
 		case 'list_workspace_symbols':
-			return listWorkspaceSymbols(fileService, workingDirectory, args);
+			return listWorkspaceSymbols(fileService, workingDirectory, args, enrichedContext);
 		case 'search_workspace_symbols':
 			return searchWorkspaceSymbols(fileService, workingDirectory, typeof args.query === 'string' ? args.query : '', typeof args.maxResults === 'number' ? args.maxResults : undefined);
 		case 'find_symbol_references':
@@ -725,37 +895,37 @@ export async function executeOpenAIHostTool(
 			return resolveImportDependencies(fileService, workingDirectory, pathArg);
 		}
 		case 'search_workspace_comments':
-			return searchWorkspaceComments(fileService, workingDirectory, args);
+			return searchWorkspaceComments(fileService, workingDirectory, args, enrichedContext);
 		case 'search_workspace_diagnostics':
-			return searchWorkspaceDiagnostics(fileService, workingDirectory, args);
+			return searchWorkspaceDiagnostics(fileService, workingDirectory, args, enrichedContext);
 		case 'list_workspace_folders':
-			return listWorkspaceFolders(workingDirectory, fileService);
+			return listWorkspaceFolders(workingDirectory, enrichedContext);
 		case 'get_project_manifests':
 			return getProjectManifests(fileService, workingDirectory, args);
 		case 'discover_workspace_tests':
 			return discoverWorkspaceTests(fileService, workingDirectory);
 		case 'format_workspace':
-			return formatWorkspace(workingDirectory, args, fileService);
+			return formatWorkspace(workingDirectory, args, fileService, enrichedContext);
 		case 'search_code_with_preview':
-			return searchCodeWithPreview(fileService, workingDirectory, args, context);
+			return searchCodeWithPreview(fileService, workingDirectory, args, enrichedContext);
 		case 'search_workspace_documentation':
 			return searchWorkspaceDocumentation(fileService, workingDirectory, args);
 		case 'search_external_retrieval':
-			return searchExternalRetrieval(args, context);
+			return searchExternalRetrieval(args, enrichedContext);
 		case 'search_semantic_workspace':
-			return searchSemanticWorkspace(fileService, workingDirectory, args, context);
+			return searchSemanticWorkspace(fileService, workingDirectory, args, enrichedContext);
 		case 'search_vector_workspace':
-			return searchVectorWorkspace(fileService, workingDirectory, args);
+			return searchVectorWorkspace(fileService, workingDirectory, args, enrichedContext);
 		case 'query_dependency_graph':
-			return queryDependencyGraph(fileService, workingDirectory, args);
+			return queryDependencyGraph(fileService, workingDirectory, args, enrichedContext);
 		case 'find_implementations':
 			return findSymbolReferences(fileService, workingDirectory, typeof args.symbol === 'string' ? args.symbol : '', typeof args.maxResults === 'number' ? args.maxResults : 25);
 		case 'normalize_imports':
-			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => normalizeImportsInFile(path, content), context);
+			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => normalizeImportsInFile(path, content), enrichedContext);
 		case 'rewrite_imports': {
 			const fromSpecifier = typeof args.fromSpecifier === 'string' ? args.fromSpecifier : '';
 			const toSpecifier = typeof args.toSpecifier === 'string' ? args.toSpecifier : '';
-			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => rewriteImportsInFile(path, content, fromSpecifier, toSpecifier), context);
+			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => rewriteImportsInFile(path, content, fromSpecifier, toSpecifier), enrichedContext);
 		}
 		case 'extract_method': {
 			const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
@@ -765,7 +935,7 @@ export async function executeOpenAIHostTool(
 			if (!pathArg || !methodName || startLine <= 0 || endLine <= 0) {
 				throw new Error('extract_method requires path, startLine, endLine, and methodName.');
 			}
-			return refactorWorkspaceFile(fileService, workingDirectory, { path: pathArg }, (path, content) => extractMethodInFile(path, content, startLine, endLine, methodName), context);
+			return refactorWorkspaceFile(fileService, workingDirectory, { path: pathArg }, (path, content) => extractMethodInFile(path, content, startLine, endLine, methodName), enrichedContext);
 		}
 		case 'apply_workspace_patch': {
 			const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
@@ -773,7 +943,20 @@ export async function executeOpenAIHostTool(
 			if (!pathArg || !patch) {
 				throw new Error('apply_workspace_patch requires path and patch.');
 			}
-			const result = await applyUnifiedPatchToFile(fileService, workingDirectory, pathArg, patch, { createCheckpoint: true });
+			const patchIndexGate = await getIndexingGateMessage(
+				fileService,
+				workingDirectory,
+				enrichedContext.waitForIndexingBeforeEdits === true,
+			);
+			if (patchIndexGate) {
+				return patchIndexGate;
+			}
+			const patchVelocity: QuantumIDEAgentEditVelocity = context.editVelocity
+				?? (context.fastApplyEdits ? 'fast' : 'safe');
+			const effectivePatchVelocity = resolveEffectiveEditVelocity({ editVelocity: patchVelocity }, [pathArg]);
+			const result = await applyUnifiedPatchToFile(fileService, workingDirectory, pathArg, patch, {
+				createCheckpoint: effectivePatchVelocity === 'safe',
+			});
 			return result.ok
 				? `${result.message}${result.checkpointId ? ` (checkpoint ${result.checkpointId})` : ''}`
 				: `Failed: ${result.message}`;
@@ -787,7 +970,7 @@ export async function executeOpenAIHostTool(
 			return `Restored checkpoint ${checkpointId} for ${restoredPath}`;
 		}
 		case 'apply_workspace_edits':
-			return applyWorkspaceEdits(fileService, workingDirectory, args, context);
+			return applyWorkspaceEdits(fileService, workingDirectory, args, enrichedContext);
 		case 'lookup_type_hierarchy':
 			return lookupTypeHierarchy(fileService, workingDirectory, args);
 		case 'search_architectural_patterns':
@@ -797,21 +980,21 @@ export async function executeOpenAIHostTool(
 		case 'suggest_dependent_files':
 			return suggestDependentFilesTool(fileService, workingDirectory, args);
 		case 'extract_component':
-			return extractComponentTool(fileService, workingDirectory, args, context);
+			return extractComponentTool(fileService, workingDirectory, args, enrichedContext);
 		case 'move_module':
-			return moveModuleTool(fileService, workingDirectory, args, context);
+			return moveModuleTool(fileService, workingDirectory, args, enrichedContext);
 		case 'migrate_api':
-			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => migrateApiInFile(path, content, String(args.fromApi ?? ''), String(args.toApi ?? '')), context);
+			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => migrateApiInFile(path, content, String(args.fromApi ?? ''), String(args.toApi ?? '')), enrichedContext);
 		case 'migrate_framework':
-			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => migrateFrameworkImports(path, content, String(args.fromFramework ?? ''), String(args.toFramework ?? '')), context);
+			return refactorWorkspaceFile(fileService, workingDirectory, args, (path, content) => migrateFrameworkImports(path, content, String(args.fromFramework ?? ''), String(args.toFramework ?? '')), enrichedContext);
 		case 'generate_test_scaffold':
-			return generateTestScaffoldTool(fileService, workingDirectory, args, context);
+			return generateTestScaffoldTool(fileService, workingDirectory, args, enrichedContext);
 		case 'update_package_dependency':
-			return updatePackageDependencyTool(fileService, workingDirectory, args, context);
+			return updatePackageDependencyTool(fileService, workingDirectory, args, enrichedContext);
 		case 'run_workspace_check':
 			return runWorkspaceCheck(workingDirectory, args, fileService);
 		case 'rename_symbol':
-			return renameSymbolTool(fileService, workingDirectory, args, context);
+			return renameSymbolTool(fileService, workingDirectory, args, enrichedContext);
 		case 'scaffold_project':
 		case 'run_repl_snippet':
 		case 'expand_query_context':
@@ -819,7 +1002,7 @@ export async function executeOpenAIHostTool(
 		case 'run_framework_workflow':
 		case 'run_git_operation':
 		case 'manage_dependency':
-			return executeQuantumIDEHostWorkflowTool(fileService, workingDirectory, toolName, args, context);
+			return executeQuantumIDEHostWorkflowTool(fileService, workingDirectory, toolName, args, enrichedContext);
 		default: {
 			const pluginResult = await executeQuantumIDEPluginHostTool(toolName, args);
 			if (pluginResult !== undefined) {
@@ -856,19 +1039,39 @@ async function readIndexPayload(raw: string, workspaceKey: string): Promise<stri
 
 export { isReadOnlyOpenAIHostTool, isQuantumIDERefactorHostTool };
 
-export async function loadWorkspaceLinkRoots(fileService: IFileService, workingDirectory: URI | undefined): Promise<URI[]> {
+async function discoveryFallbackWhenIndexingDisabled(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext | undefined,
+	indexedToolName: string,
+): Promise<string | undefined> {
+	if (context?.indexingEnabled !== false) {
+		return undefined;
+	}
+	const query = typeof args.query === 'string' ? args.query.trim() : '';
+	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
+	const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, context ?? {});
+	return formatQuantumIDEIndexingOffToolFallback(indexedToolName, fallback);
+}
+
+export async function loadWorkspaceLinks(fileService: IFileService, workingDirectory: URI | undefined): Promise<IQuantumIDEWorkspaceLink[]> {
 	if (!workingDirectory) {
 		return [];
 	}
 	const linksFile = joinPath(workingDirectory, QUANTUMIDE_WORKSPACE_LINKS_FILE);
 	try {
 		const raw = (await fileService.readFile(linksFile)).value.toString();
-		return parseWorkspaceLinksJson(raw)
-			.map(link => URI.file(link.path))
-			.filter(uri => uri.fsPath.length > 0);
+		return parseWorkspaceLinksJson(raw);
 	} catch {
 		return [];
 	}
+}
+
+export async function loadWorkspaceLinkRoots(fileService: IFileService, workingDirectory: URI | undefined): Promise<URI[]> {
+	return (await loadWorkspaceLinks(fileService, workingDirectory))
+		.map(link => URI.file(link.path))
+		.filter(uri => uri.fsPath.length > 0);
 }
 
 export function formatStructuredCompileErrors(stdout: string, stderr: string): string {
@@ -883,15 +1086,28 @@ export function formatStructuredCompileErrors(stdout: string, stderr: string): s
 	return `Structured errors (${errorLines.length} line(s)):\n${errorLines.join('\n')}`;
 }
 
-async function readWorkspaceFile(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function readWorkspaceFile(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>, context: IOpenAIHostToolContext): Promise<string> {
 	const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
 	if (!pathArg) {
 		throw new Error('read_workspace_file requires a path.');
 	}
-	const resource = resolveWorkspacePath(workingDirectory, pathArg);
+	const start = Date.now();
+	const resource = await resolveWorkspacePathForHost(fileService, workingDirectory, pathArg, context, 'read');
 	const maxChars = typeof args.maxChars === 'number' && args.maxChars > 0 ? Math.min(args.maxChars, 48_000) : DEFAULT_MAX_READ_CHARS;
-	const content = await fileService.readFile(resource);
-	let text = content.value.toString();
+	const STREAM_READ_THRESHOLD = 512 * 1024;
+	let text: string;
+	try {
+		const stat = await fileService.stat(resource);
+		if (!stat.isDirectory && typeof stat.size === 'number' && stat.size > STREAM_READ_THRESHOLD) {
+			const chunk = await fileService.readFile(resource, { length: STREAM_READ_THRESHOLD });
+			text = chunk.value.toString();
+			text += `\n\n[read first ${STREAM_READ_THRESHOLD} bytes of ${stat.size}; use startLine/endLine for partial reads]`;
+		} else {
+			text = (await fileService.readFile(resource)).value.toString();
+		}
+	} catch {
+		text = (await fileService.readFile(resource)).value.toString();
+	}
 	const startLine = getLineNumberArg(args, 'startLine', 'start_line');
 	if (startLine !== undefined) {
 		const lines = text.split(/\r?\n/);
@@ -901,18 +1117,120 @@ async function readWorkspaceFile(fileService: IFileService, workingDirectory: UR
 		text = lines.slice(start, end).join('\n');
 	}
 	if (text.length <= maxChars) {
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-read',
+			operation: 'read',
+			durationMs: Date.now() - start,
+			fileCount: 1,
+		}));
 		return text;
 	}
+	console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+		component: 'agent-read',
+		operation: 'read-truncated',
+		durationMs: Date.now() - start,
+		truncated: true,
+	}));
 	return `${text.slice(0, maxChars)}\n\n[truncated to ${maxChars} characters]`;
 }
 
-async function listWorkspaceSymbols(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function listWorkspaceDirectory(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext,
+): Promise<string> {
+	const pathArg = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : '.';
+	const maxEntries = typeof args.maxEntries === 'number' && args.maxEntries > 0 ? Math.min(args.maxEntries, 200) : 80;
+	const resource = await resolveWorkspacePathForHost(fileService, workingDirectory, pathArg, context, 'list');
+	const stat = await fileService.resolve(resource);
+	if (!stat.isDirectory) {
+		throw new Error(`Not a directory: ${pathArg}`);
+	}
+	const links = context.workspaceLinks ?? (workingDirectory ? await loadWorkspaceLinks(fileService, workingDirectory) : []);
+	const roots = collectAgentSearchRoots(workingDirectory, links);
+	const policy = await getHostIgnorePolicy(fileService, workingDirectory, context);
+	const lines: string[] = [];
+	for (const child of (stat.children ?? []).sort((a, b) => a.name.localeCompare(b.name))) {
+		if (lines.length >= maxEntries) {
+			lines.push(`… truncated after ${maxEntries} entries`);
+			break;
+		}
+		const rel = relativePathInWorkspaceRoots(child.resource, roots) ?? child.name;
+		if (isQuantumIDEPathIgnored(rel, policy, 'ai', child.name)) {
+			continue;
+		}
+		lines.push(`${child.isDirectory ? '[dir]' : '[file]'} ${rel}`);
+	}
+	return lines.length ? `Directory ${pathArg}:\n\n${lines.join('\n')}` : `Directory ${pathArg} is empty (or all entries are ignored).`;
+}
+
+async function searchWorkspaceFiles(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext,
+): Promise<string> {
+	const query = typeof args.query === 'string' ? args.query.trim() : '';
+	if (!query) {
+		throw new Error('search_workspace_files requires a query.');
+	}
+	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 10;
+	const roots = await resolveSearchRoots(fileService, workingDirectory, context);
+	const policy = await getHostIgnorePolicy(fileService, workingDirectory, context);
+	const paths: string[] = [];
+	for (const root of roots) {
+		await scanDirectory(fileService, root, async (resource) => {
+			if (paths.length >= 8_000) {
+				return;
+			}
+			const rel = relativePathInWorkspaceRoots(resource, roots);
+			if (!rel || isQuantumIDEPathIgnored(rel, policy, 'ai')) {
+				return;
+			}
+			try {
+				const st = await fileService.stat(resource);
+				if (!st.isDirectory) {
+					paths.push(rel);
+				}
+			} catch {
+				// skip
+			}
+		}, policy, roots);
+	}
+	const matches = quantumideFuzzyMatchFilePaths(query, paths, maxResults);
+	console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+		component: 'agent-search',
+		operation: 'fuzzy-path',
+		matchCount: matches.length,
+		fileCount: paths.length,
+	}));
+	if (matches.length === 0) {
+		return `No file paths matched "${query}" (searched ${paths.length} indexed paths).`;
+	}
+	return `File path matches for "${query}":\n\n${matches.map(m => `- ${m.path}`).join('\n')}`;
+}
+
+async function listWorkspaceSymbols(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>, context: IOpenAIHostToolContext): Promise<string> {
 	const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
 	if (!pathArg) {
 		throw new Error('list_workspace_symbols requires a path.');
 	}
-	const resource = resolveWorkspacePath(workingDirectory, pathArg);
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 100) : DEFAULT_MAX_SYMBOLS;
+	const normalizedPath = pathArg.replace(/\\/g, '/');
+	if (workingDirectory) {
+		try {
+			const raw = (await fileService.readFile(joinPath(workingDirectory, QUANTUMIDE_SYMBOL_INDEX_FILE))).value.toString();
+			const parsed = JSON.parse(raw) as { symbols?: IQuantumIDEAstSymbolEntry[] };
+			const indexed = (parsed.symbols ?? []).filter(s => s.path.replace(/\\/g, '/') === normalizedPath || s.path.endsWith(`/${normalizedPath}`));
+			if (indexed.length > 0) {
+				return `Symbols in ${pathArg} (workspace index):\n\n${indexed.slice(0, maxResults).map(s => `${s.line}: ${s.kind} ${s.name}`).join('\n')}`;
+			}
+		} catch {
+			// fall through to file parse
+		}
+	}
+	const resource = await resolveWorkspacePathForHost(fileService, workingDirectory, pathArg, context, 'read');
 	const text = (await fileService.readFile(resource)).value.toString();
 	const lines = text.split(/\r?\n/);
 	const symbols: string[] = [];
@@ -957,12 +1275,13 @@ async function searchWorkspaceText(
 	}
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 50) : DEFAULT_MAX_SEARCH_RESULTS;
 	const roots = await resolveSearchRoots(fileService, workingDirectory, context);
+	const policy = await getHostIgnorePolicy(fileService, workingDirectory, context);
 	if (roots.length === 1) {
-		return searchSingleRoot(fileService, roots[0], query, maxResults);
+		return searchSingleRoot(fileService, roots[0], query, maxResults, policy);
 	}
 	const sections: string[] = [];
 	for (const root of roots) {
-		const section = await searchSingleRoot(fileService, root, query, maxResults);
+		const section = await searchSingleRoot(fileService, root, query, maxResults, policy);
 		sections.push(`### ${root.fsPath}\n${section}`);
 	}
 	return sections.join('\n\n');
@@ -983,11 +1302,19 @@ async function searchWorkspaceTextBatch(
 	const maxPerQuery = typeof args.maxResultsPerQuery === 'number' && args.maxResultsPerQuery > 0
 		? Math.min(args.maxResultsPerQuery, 30)
 		: 12;
-	const results = await Promise.all(queries.map(async query => {
+	const batchPromise = Promise.all(queries.map(async query => {
 		const body = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults: maxPerQuery }, context);
 		return `## Query: ${query}\n${body}`;
 	}));
-	return results.join('\n\n');
+	const timeoutPromise = new Promise<string>((_, reject) => {
+		setTimeout(() => reject(new Error('search_workspace_text_batch timed out after 60s')), 60_000);
+	});
+	try {
+		const results = await Promise.race([batchPromise, timeoutPromise]);
+		return (results as string[]).join('\n\n');
+	} catch (err) {
+		return `Batch search failed: ${err instanceof Error ? err.message : String(err)}. Try fewer queries or use search_workspace_text.`;
+	}
 }
 
 async function resolveSearchRoots(
@@ -995,26 +1322,38 @@ async function resolveSearchRoots(
 	workingDirectory: URI | undefined,
 	context: IOpenAIHostToolContext,
 ): Promise<URI[]> {
-	const primary = workingDirectory ?? URI.file('/');
-	const roots = [primary];
-	if (context.crossRootSearch) {
-		const linked = await loadWorkspaceLinkRoots(fileService, workingDirectory);
-		for (const link of linked) {
-			if (link.fsPath !== primary.fsPath && !roots.some(r => r.fsPath === link.fsPath)) {
-				roots.push(link);
-			}
-		}
+	const links = context.workspaceLinks ?? await loadWorkspaceLinks(fileService, workingDirectory);
+	if (context.crossRootSearch === false) {
+		return workingDirectory ? [workingDirectory] : [URI.file('/')];
 	}
-	return roots;
+	return collectAgentSearchRoots(workingDirectory, links);
 }
 
-async function searchSingleRoot(fileService: IFileService, root: URI, query: string, maxResults: number): Promise<string> {
-	const rgMatches = await searchWithRipgrep(root.fsPath, query, maxResults);
-	if (rgMatches) {
-		if (rgMatches.length === 0) {
+async function searchSingleRoot(
+	fileService: IFileService,
+	root: URI,
+	query: string,
+	maxResults: number,
+	policy?: IQuantumIDEWorkspaceIgnorePolicy,
+): Promise<string> {
+	const rgResult = await searchQuantumIDEWorkspaceTextWithRipgrep(root.fsPath, query, maxResults);
+	if (rgResult) {
+		const filtered = policy
+			? rgResult.matches.filter(line => {
+				const pathPart = line.split(':')[0] ?? '';
+				return !isQuantumIDEPathIgnored(pathPart, policy, 'ai');
+			})
+			: rgResult.matches;
+		if (filtered.length === 0) {
 			return `No matches found for "${query}".`;
 		}
-		return `Found ${rgMatches.length} match(es) for "${query}" (ripgrep):\n\n${rgMatches.join('\n')}`;
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-search',
+			operation: `ripgrep query=${JSON.stringify(query)}`,
+			matchCount: filtered.length,
+			durationMs: rgResult.durationMs,
+		}));
+		return `Found ${filtered.length} match(es) for "${query}" (ripgrep):\n\n${filtered.join('\n')}`;
 	}
 	const matches: string[] = [];
 	let scanned = 0;
@@ -1042,38 +1381,24 @@ async function searchSingleRoot(fileService: IFileService, root: URI, query: str
 		} catch {
 			// skip unreadable files
 		}
-	});
+	}, policy, [root]);
 	if (matches.length === 0) {
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-search',
+			operation: 'scan-fallback',
+			fileCount: scanned,
+			fallback: 'directory-scan',
+		}));
 		return `No matches found for "${query}" (scanned ${scanned} files).`;
 	}
+	console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+		component: 'agent-search',
+		operation: 'scan-fallback',
+		matchCount: matches.length,
+		fileCount: scanned,
+		fallback: 'directory-scan',
+	}));
 	return `Found ${matches.length} match(es) for "${query}" (scanned ${scanned} files):\n\n${matches.join('\n')}`;
-}
-
-async function searchWithRipgrep(rootPath: string, query: string, maxResults: number): Promise<string[] | undefined> {
-	return new Promise(resolve => {
-		const args = [
-			'--line-number',
-			'--max-count', String(maxResults),
-			'--glob', '!node_modules/**',
-			'--glob', '!.git/**',
-			'--glob', '!out/**',
-			'--glob', '!dist/**',
-			'--glob', '!*.min.js',
-			'-F', query,
-			'.',
-		];
-		const child = spawn('rg', args, { cwd: rootPath, stdio: ['ignore', 'pipe', 'pipe'] });
-		let stdout = '';
-		child.stdout?.on('data', chunk => { stdout += String(chunk); });
-		child.on('error', () => resolve(undefined));
-		child.on('close', code => {
-			if (code === 0 || code === 1) {
-				resolve(stdout.split('\n').filter(Boolean).slice(0, maxResults));
-			} else {
-				resolve(undefined);
-			}
-		});
-	});
 }
 
 async function resolveTaskCommand(workingDirectory: URI | undefined, check: string, fileService: IFileService): Promise<{ command: string; cmdArgs: string[] } | undefined> {
@@ -1103,6 +1428,10 @@ async function resolveTaskCommand(workingDirectory: URI | undefined, check: stri
 
 async function runWorkspaceCheck(workingDirectory: URI | undefined, args: Record<string, unknown>, fileService: IFileService): Promise<string> {
 	const check = typeof args.check === 'string' ? args.check : 'compile';
+	const scopePath = typeof args.path === 'string' ? args.path.trim() : '';
+	if (check === 'compile' && scopePath && isDocumentationPath(scopePath)) {
+		return `Skipped compile for documentation path ${scopePath}. No TypeScript compile is required for HTML/Markdown user-guide edits.`;
+	}
 	const cwd = workingDirectory?.fsPath ?? process.cwd();
 	const taskCommand = await resolveTaskCommand(workingDirectory, check, fileService);
 	let command: string;
@@ -1170,8 +1499,8 @@ function runShellCommand(command: string, args: string[], cwd: string, timeoutMs
 	});
 }
 
-function resolveWorkspacePath(workingDirectory: URI | undefined, pathArg: string): URI {
-	return resolveQuantumIDEWorkspacePath(workingDirectory, pathArg);
+function resolveWorkspacePath(workingDirectory: URI | undefined, pathArg: string, context: IOpenAIHostToolContext = {}): URI {
+	return resolvePathAcrossWorkspaceRoots(workingDirectory, context.workspaceLinks ?? [], pathArg);
 }
 
 async function applyWorkspaceEdits(
@@ -1190,23 +1519,72 @@ async function applyWorkspaceEdits(
 		].join('\n');
 	}
 	const { summary, edits } = parseWorkspaceEditsArg(args);
-	const maxEdits = context.maxEditScope && context.maxEditScope > 0 ? context.maxEditScope : undefined;
-	const result = await applyQuantumIDEWorkspaceEdits(fileService, workingDirectory, edits, {
-		requireDeleteConfirmation: context.requireDeleteConfirmation !== false,
-		maxEdits,
-		createCheckpoints: true,
+	const indexGate = await getIndexingGateMessage(
+		fileService,
 		workingDirectory,
-		atomic: true,
-		validateSyntax: true,
-		policies: context.workspacePolicies,
+		context.waitForIndexingBeforeEdits === true,
+	);
+	if (indexGate) {
+		return indexGate;
+	}
+	const editVelocity = resolveEffectiveEditVelocity(
+		{ editVelocity: context.editVelocity ?? (context.fastApplyEdits ? 'fast' : 'safe') },
+		edits.map(e => e.path),
+	);
+	const maxLines = context.directEditorMaxLines ?? 100;
+	if (editVelocity !== 'maximum' && shouldPreferDirectEditorEdit(edits, maxLines, context.preferDirectEditorEdits !== false)) {
+		const edit = edits[0];
+		return [
+			`Small single-file change (${edit.path}) — prefer client tools for speed:`,
+			'- quantumide_show_inline_suggestion (inline accept/reject)',
+			'- quantumide_manipulate_editor (cursor/selection insert/replace)',
+			`Or re-call apply_workspace_edits to force full-file write (${edit.content?.length ?? 0} chars).`,
+		].join('\n');
+	}
+	const maxEdits = context.maxEditScope && context.maxEditScope > 0 ? context.maxEditScope : undefined;
+	const applyOptions = resolveApplyWorkspaceEditsOptions({
+		editVelocity,
+		editCount: edits.length,
+		fastApplyEdits: context.fastApplyEdits,
+		requireDeleteConfirmation: context.requireDeleteConfirmation,
+		workingDirectory,
+		workspaceLinks: context.workspaceLinks,
+		workspacePolicies: context.workspacePolicies,
+		maxEdits,
 	});
-	return formatApplyWorkspaceEditsResult(result, summary);
+	const result = await applyQuantumIDEWorkspaceEdits(fileService, workingDirectory, edits, applyOptions);
+	if (result.applied.length > 0 && context.verifyOnEdit === 'defer' && workingDirectory) {
+		await appendDeferredVerification(fileService, workingDirectory, 'compile', summary ?? 'apply_workspace_edits');
+	}
+	let formatted = formatApplyWorkspaceEditsResult(result, summary);
+	if (result.applied.length > 0) {
+		formatted = formatBatchApplySummary(summary, edits.length, result.applied) + '\n\n' + formatted;
+		if (context.verifyOnEdit === 'defer') {
+			formatted += '\n\nVerification deferred. User can run **QuantumIDE: Run Deferred Agent Verification**.';
+		} else if (context.verifyOnEdit === 'never') {
+			formatted += '\n\nAutomatic verification skipped (verifyOnEdit=never).';
+		}
+	}
+	return formatted;
 }
 
-async function searchVectorWorkspace(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function searchVectorWorkspace(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext = {},
+): Promise<string> {
 	const query = typeof args.query === 'string' ? args.query.trim() : '';
 	if (!query || !workingDirectory) {
 		throw new Error('search_vector_workspace requires a query and workspace folder.');
+	}
+	const indexingOff = await discoveryFallbackWhenIndexingDisabled(fileService, workingDirectory, args, context, 'search_vector_workspace');
+	if (indexingOff) {
+		return indexingOff;
+	}
+	if (context.semanticIndexingEnabled === false) {
+		const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults: args.maxResults }, context);
+		return formatQuantumIDEIndexingOffToolFallback('search_vector_workspace', fallback);
 	}
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
 	try {
@@ -1234,18 +1612,29 @@ async function searchVectorWorkspace(fileService: IFileService, workingDirectory
 		}
 		const hits = searchVectorIndex(index, query, maxResults);
 		if (hits.length === 0) {
-			return `No vector matches for "${query}".`;
+			const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, {});
+			return `No vector matches for "${query}" — automatic fallback (search_workspace_text):\n\n${fallback}`;
 		}
 		return `Vector matches for "${query}":\n\n${hits.map(hit => `- ${hit.path} (score ${hit.score.toFixed(3)})`).join('\n')}`;
 	} catch {
-		return 'Vector index not found. Enable quantumide.indexing.embeddingProvider, set vector store to incremental/lancedb, and reindex.';
+		const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, {});
+		return `Vector index not found — automatic fallback (search_workspace_text):\n\n${fallback}`;
 	}
 }
 
-async function searchWorkspaceComments(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function searchWorkspaceComments(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext = {},
+): Promise<string> {
 	const query = typeof args.query === 'string' ? args.query.trim() : '';
 	if (!query || !workingDirectory) {
 		throw new Error('search_workspace_comments requires a query and workspace folder.');
+	}
+	const indexingOff = await discoveryFallbackWhenIndexingDisabled(fileService, workingDirectory, args, context, 'search_workspace_comments');
+	if (indexingOff) {
+		return indexingOff;
 	}
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
 	try {
@@ -1264,10 +1653,19 @@ async function searchWorkspaceComments(fileService: IFileService, workingDirecto
 	}
 }
 
-async function searchWorkspaceDiagnostics(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function searchWorkspaceDiagnostics(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext = {},
+): Promise<string> {
 	const query = typeof args.query === 'string' ? args.query.trim() : '';
 	if (!workingDirectory) {
 		throw new Error('search_workspace_diagnostics requires an open workspace folder.');
+	}
+	const indexingOff = await discoveryFallbackWhenIndexingDisabled(fileService, workingDirectory, args, context, 'search_workspace_diagnostics');
+	if (indexingOff) {
+		return indexingOff;
 	}
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
 	try {
@@ -1286,9 +1684,25 @@ async function searchWorkspaceDiagnostics(fileService: IFileService, workingDire
 	}
 }
 
-async function queryDependencyGraph(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
+async function queryDependencyGraph(
+	fileService: IFileService,
+	workingDirectory: URI | undefined,
+	args: Record<string, unknown>,
+	context: IOpenAIHostToolContext = {},
+): Promise<string> {
 	if (!workingDirectory) {
 		throw new Error('query_dependency_graph requires an open workspace folder.');
+	}
+	const nodeQuery = typeof args.node === 'string' ? args.node.trim() : (typeof args.query === 'string' ? args.query.trim() : '');
+	const indexingOff = await discoveryFallbackWhenIndexingDisabled(
+		fileService,
+		workingDirectory,
+		{ query: nodeQuery, maxResults: args.maxResults },
+		context,
+		'query_dependency_graph',
+	);
+	if (indexingOff) {
+		return indexingOff;
 	}
 	const maxNodes = typeof args.maxNodes === 'number' && args.maxNodes > 0 ? Math.min(args.maxNodes, 80) : 30;
 	const nodeFilter = typeof args.node === 'string' ? args.node.trim().toLowerCase() : '';
@@ -1319,12 +1733,20 @@ async function refactorWorkspaceFile(
 	if (!pathArg || !workingDirectory) {
 		throw new Error('Refactor tool requires path and workspace folder.');
 	}
-	const resource = resolveWorkspacePath(workingDirectory, pathArg);
+	const resource = resolveWorkspacePath(workingDirectory, pathArg, context);
 	const prior = (await fileService.readFile(resource)).value.toString();
 	const next = transform(pathArg, prior);
 	if (context.autoApplyEdits === true) {
+		await assertQuantumIDEWorkspaceWritableForTool(
+			fileService,
+			workingDirectory,
+			context.workspaceLinks,
+			'refactor',
+			context.workspaceReadonly,
+		);
 		const result = await applyQuantumIDEWorkspaceEdits(fileService, workingDirectory, [{ operation: 'write', path: pathArg, content: next.content }], {
 			workingDirectory,
+			workspaceLinks: context.workspaceLinks,
 			atomic: true,
 			validateSyntax: true,
 			createCheckpoints: true,
@@ -1375,6 +1797,8 @@ async function searchSemanticWorkspace(fileService: IFileService, workingDirecto
 }
 
 async function searchSemanticWorkspaceInner(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>, context?: IOpenAIHostToolContext): Promise<string> {
+	const semanticStart = Date.now();
+	try {
 	const query = typeof args.query === 'string' ? args.query.trim() : '';
 	if (!query) {
 		throw new Error('search_semantic_workspace requires a query.');
@@ -1382,20 +1806,39 @@ async function searchSemanticWorkspaceInner(fileService: IFileService, workingDi
 	if (!workingDirectory) {
 		throw new Error('search_semantic_workspace requires an open workspace folder.');
 	}
+	const indexingOff = await discoveryFallbackWhenIndexingDisabled(fileService, workingDirectory, args, context, 'search_semantic_workspace');
+	if (indexingOff) {
+		return indexingOff;
+	}
+	if (context?.semanticIndexingEnabled === false) {
+		const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
+		const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, context ?? {});
+		return formatQuantumIDEIndexingOffToolFallback('search_semantic_workspace', fallback);
+	}
 	const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.min(args.maxResults, 30) : 15;
-	const indexFile = joinPath(workingDirectory, QUANTUMIDE_SEMANTIC_INDEX_FILE);
-	let raw: string;
-	try {
-		raw = (await fileService.readFile(indexFile)).value.toString();
-	} catch {
-		return 'Semantic index not found. Run **QuantumIDE: Reindex Workspace** or enable quantumide.ai.semanticIndexing.enabled, then retry.';
+	const targetDirs = Array.isArray(args.target_directories)
+		? args.target_directories.filter((d): d is string => typeof d === 'string' && d.trim().length > 0)
+		: undefined;
+	const status = await readQuantumIDEIndexingStatus(fileService, workingDirectory);
+	if (status?.busy && !status.ready) {
+		const pct = status.percent !== undefined ? ` (${status.percent}%)` : '';
+		return `Workspace indexing in progress${pct}. Semantic search may be incomplete — retry after indexing completes or use search_workspace_text.`;
 	}
-	const decoded = await readIndexPayload(raw, workingDirectory.fsPath);
-	const index = parseSemanticIndexJson(decoded);
+	const { semantic: index, ast: astIndex } = await loadQuantumIDEPersistedSemanticIndexes(
+		fileService,
+		workingDirectory,
+		readIndexPayload,
+	);
 	if (!index) {
-		return 'Semantic index is invalid or empty. Reindex the workspace and retry.';
+		const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, context ?? {});
+		return `Semantic index not found — automatic fallback (search_workspace_text):\n\n${fallback}`;
 	}
-	let hits = searchSemanticIndex(index, query, maxResults);
+	let hits = searchSemanticIndex(index, query, maxResults * 3);
+	if (targetDirs?.length) {
+		hits = hits.filter(h => filterPathsByTargetDirectories([h.path], targetDirs).length > 0);
+	}
+	hits = hits.slice(0, maxResults);
+	const astSymbols: IQuantumIDEAstSymbolEntry[] = [...(astIndex?.symbols ?? [])];
 	for (const plugin of getQuantumIDEPlugins()) {
 		if (!plugin.retrievalProvider || shouldQuantumIDEBlockExternalIndexing(context?.privacyLocalIndexingOnly === true)) {
 			continue;
@@ -1411,9 +1854,20 @@ async function searchSemanticWorkspaceInner(fileService: IFileService, workingDi
 	}
 	hits = hits.sort((a, b) => b.score - a.score).slice(0, maxResults);
 	if (hits.length === 0) {
-		return `No semantic matches for "${query}".`;
+		const fallback = await searchWorkspaceText(fileService, workingDirectory, { query, maxResults }, context ?? {});
+		return `No semantic matches for "${query}". Fallback text search:\n\n${fallback}`;
 	}
-	return `Semantic matches for "${query}":\n\n${hits.map(hit => `- ${hit.path} (score ${hit.score.toFixed(2)})`).join('\n')}`;
+	const lines = hits.map(hit => formatSemanticSearchHitLine(hit, astSymbols));
+	return `Semantic matches for "${query}" (index v${index.version}, ${index.documents.length} docs):\n\n${lines.join('\n')}`;
+	} finally {
+		const semanticMs = Date.now() - semanticStart;
+		recordQuantumIDESemanticSearchLatency(semanticMs);
+		console.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'agent-search',
+			operation: 'semantic',
+			durationMs: semanticMs,
+		}));
+	}
 }
 
 async function lookupTypeHierarchy(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
@@ -1457,15 +1911,15 @@ async function renameSymbolTool(fileService: IFileService, workingDirectory: URI
 	if (!pathArg || !oldName || !newName) {
 		throw new Error('rename_symbol requires path, oldName, and newName.');
 	}
-	if (workspaceWide) {
+	if (workspaceWide || context.preferLspRename !== false) {
 		return [
 			`Workspace-wide rename requested for "${oldName}" → "${newName}" in ${pathArg}.`,
-			'Use the client `rename` tool (vscode_renameSymbol) at the symbol location for LSP-accurate cross-file renames.',
+			'Use the client `rename` tool (vscode_renameSymbol) or `quantumide_lsp_workspace_rename` at the symbol location for LSP-accurate cross-file renames.',
 			'The client rename flow opens a preview and stages per-file pending edits so each change can be accepted/rejected before apply.',
-			'Do not use rename_symbol when workspaceWide is true.',
+			'Do not use rename_symbol when workspaceWide is true or preferLspRename is enabled.',
 		].join('\n');
 	}
-	const resource = resolveWorkspacePath(workingDirectory, pathArg);
+	const resource = resolveWorkspacePath(workingDirectory, pathArg, context);
 	const content = (await fileService.readFile(resource)).value.toString();
 	const result = renameSymbolInFile(pathArg, content, oldName, newName);
 	if (context.autoApplyEdits) {
@@ -1511,7 +1965,7 @@ async function extractComponentTool(fileService: IFileService, workingDirectory:
 	if (!pathArg || !targetPath || !componentName) {
 		throw new Error('extract_component requires path, targetPath, componentName, startLine, endLine.');
 	}
-	const resource = resolveWorkspacePath(workingDirectory, pathArg);
+	const resource = resolveWorkspacePath(workingDirectory, pathArg, context);
 	const content = (await fileService.readFile(resource)).value.toString();
 	const result = extractComponentInFile(pathArg, content, componentName, startLine, endLine, targetPath);
 	if (context.autoApplyEdits) {
@@ -1530,7 +1984,7 @@ async function moveModuleTool(fileService: IFileService, workingDirectory: URI |
 	if (!fromPath || !toPath || !workingDirectory) {
 		throw new Error('move_module requires fromPath and toPath.');
 	}
-	const fromRes = resolveWorkspacePath(workingDirectory, fromPath);
+	const fromRes = resolveWorkspacePath(workingDirectory, fromPath, context);
 	const content = moveModuleContent((await fileService.readFile(fromRes)).value.toString(), fromPath, toPath);
 	if (context.autoApplyEdits) {
 		await applyQuantumIDEWorkspaceEdits(fileService, workingDirectory, [
@@ -1571,7 +2025,13 @@ async function updatePackageDependencyTool(fileService: IFileService, workingDir
 	return `Proposed ${packageName}@${version} in package.json.`;
 }
 
-async function scanDirectory(fileService: IFileService, resource: URI, visitor: (resource: URI) => Promise<void>): Promise<void> {
+async function scanDirectory(
+	fileService: IFileService,
+	resource: URI,
+	visitor: (resource: URI) => Promise<void>,
+	policy?: IQuantumIDEWorkspaceIgnorePolicy,
+	roots?: readonly URI[],
+): Promise<void> {
 	let stat;
 	try {
 		stat = await fileService.stat(resource);
@@ -1579,6 +2039,12 @@ async function scanDirectory(fileService: IFileService, resource: URI, visitor: 
 		return;
 	}
 	if (!stat.isDirectory) {
+		if (policy && roots?.length) {
+			const rel = relativePathInWorkspaceRoots(resource, roots);
+			if (rel && isQuantumIDEPathIgnored(rel, policy, 'ai')) {
+				return;
+			}
+		}
 		await visitor(resource);
 		return;
 	}
@@ -1592,20 +2058,18 @@ async function scanDirectory(fileService: IFileService, resource: URI, visitor: 
 		if (child.name.startsWith('.') || child.name === 'node_modules' || child.name === 'out' || child.name === 'dist') {
 			continue;
 		}
-		await scanDirectory(fileService, child.resource, visitor);
+		if (policy && roots?.length) {
+			const rel = relativePathInWorkspaceRoots(child.resource, roots);
+			if (rel && isQuantumIDEPathIgnored(rel, policy, 'ai', child.name)) {
+				continue;
+			}
+		}
+		await scanDirectory(fileService, child.resource, visitor, policy, roots);
 	}
 }
 
-async function listWorkspaceFolders(workingDirectory: URI | undefined, fileService: IFileService): Promise<string> {
-	const lines: string[] = [];
-	if (workingDirectory) {
-		lines.push(`Primary: ${workingDirectory.fsPath}`);
-	}
-	const links = await loadWorkspaceLinkRoots(fileService, workingDirectory);
-	for (const link of links) {
-		lines.push(`Linked: ${link.fsPath}`);
-	}
-	return lines.length ? lines.join('\n') : 'No workspace folder is open.';
+async function listWorkspaceFolders(workingDirectory: URI | undefined, context: IOpenAIHostToolContext): Promise<string> {
+	return formatWorkspaceRootsForAgent(workingDirectory, context.workspaceLinks ?? []);
 }
 
 async function getProjectManifests(fileService: IFileService, workingDirectory: URI | undefined, args: Record<string, unknown>): Promise<string> {
@@ -1665,7 +2129,7 @@ async function discoverWorkspaceTests(fileService: IFileService, workingDirector
 	return formatDiscoveredTests(result);
 }
 
-async function formatWorkspace(workingDirectory: URI | undefined, args: Record<string, unknown>, fileService: IFileService): Promise<string> {
+async function formatWorkspace(workingDirectory: URI | undefined, args: Record<string, unknown>, fileService: IFileService, context: IOpenAIHostToolContext = {}): Promise<string> {
 	const action = typeof args.action === 'string' ? args.action : 'format';
 	const pathArg = typeof args.path === 'string' ? args.path.trim() : '';
 	if (action === 'lint') {
@@ -1673,7 +2137,7 @@ async function formatWorkspace(workingDirectory: URI | undefined, args: Record<s
 	}
 	const cwd = workingDirectory?.fsPath ?? process.cwd();
 	if (pathArg && workingDirectory) {
-		const resource = resolveWorkspacePath(workingDirectory, pathArg);
+		const resource = resolveWorkspacePath(workingDirectory, pathArg, context);
 		const { code, stdout, stderr } = await runShellCommand('npx', ['prettier', '--write', resource.fsPath], cwd, 120_000);
 		const out = (stdout + stderr).slice(-8000);
 		return code === 0 ? `Formatted ${pathArg}.\n${out}` : `Format failed (exit ${code}).\n${out}`;
@@ -1720,7 +2184,7 @@ async function searchCodeWithPreview(
 			break;
 		}
 		try {
-			const excerpt = await readWorkspaceFile(fileService, workingDirectory, { path, maxChars: 1200, startLine: 1, endLine: 40 });
+			const excerpt = await readWorkspaceFile(fileService, workingDirectory, { path, maxChars: 1200, startLine: 1, endLine: 40 }, context ?? {});
 			previews.push(`\n### ${path}\n\`\`\`\n${excerpt}\n\`\`\``);
 			count++;
 		} catch {

@@ -4,6 +4,12 @@
 
 import { QuantumIDEAISettingId, type QuantumIDEChatSettingsCategory } from '../../platform/quantumide/common/quantumideAISettings.js';
 
+/** Opens Edit velocity + Verify on edit in the standard Settings UI (searchable by description). */
+export const AGENT_WORKFLOW_SETTINGS_QUERY = [
+	QuantumIDEAISettingId.AgentEditVelocity,
+	QuantumIDEAISettingId.AgentVerifyOnEdit,
+].map(id => `@id:${id}`).join(' ');
+
 /** Filter queries for embedded settings editor per category (shared by panel + hub). */
 export const SETTINGS_QUERIES: Record<QuantumIDEChatSettingsCategory, string> = {
 	general: [QuantumIDEAISettingId.Enabled, QuantumIDEAISettingId.ChatDefaultMode, 'workbench.startupEditor', 'workbench.colorTheme'].map(id => `@id:${id}`).join(' '),
@@ -16,9 +22,22 @@ export const SETTINGS_QUERIES: Record<QuantumIDEChatSettingsCategory, string> = 
 		QuantumIDEAISettingId.ModelTaskRoutes,
 		QuantumIDEAISettingId.ChatTokenBudget,
 	].map(id => `@id:${id}`).join(' '),
-	chat: [QuantumIDEAISettingId.ChatSyncRealtime, QuantumIDEAISettingId.ChatInlineEnabled, QuantumIDEAISettingId.ChatDiffSideBySide, QuantumIDEAISettingId.ChatTokenBudget].map(id => `@id:${id}`).join(' '),
+	chat: [
+		QuantumIDEAISettingId.ChatSyncRealtime,
+		QuantumIDEAISettingId.ChatInlineEnabled,
+		QuantumIDEAISettingId.ChatDiffSideBySide,
+		QuantumIDEAISettingId.ChatTokenBudget,
+		QuantumIDEAISettingId.ChatPerfInstrumentationEnabled,
+		QuantumIDEAISettingId.ChatPerfInstrumentationVerbose,
+		QuantumIDEAISettingId.ChatPerfInstrumentationLogToConsole,
+	].map(id => `@id:${id}`).join(' '),
 	agent: [
 		QuantumIDEAISettingId.AgentAutoApplyEdits,
+		QuantumIDEAISettingId.AgentVerifyOnEdit,
+		QuantumIDEAISettingId.AgentFastApplyEdits,
+		QuantumIDEAISettingId.AgentEditVelocity,
+		QuantumIDEAISettingId.AgentPreferDirectEditorEdits,
+		QuantumIDEAISettingId.AgentInstantPaletteCommands,
 		QuantumIDEAISettingId.AgentAutoApplyThreshold,
 		QuantumIDEAISettingId.AgentMaxEditScope,
 		QuantumIDEAISettingId.AgentRetryOnError,
@@ -57,7 +76,13 @@ export const SETTINGS_QUERIES: Record<QuantumIDEChatSettingsCategory, string> = 
 		QuantumIDEAISettingId.AgentAuditEnabled,
 	].map(id => `@id:${id}`).join(' '),
 	workspace: [QuantumIDEAISettingId.IndexingEnabled, 'files.exclude', 'search.exclude'].map(id => `@id:${id}`).join(' '),
-	security: [QuantumIDEAISettingId.AgentAutoApplyEdits, QuantumIDEAISettingId.AgentRequireConfirmationForFileDelete, QuantumIDEAISettingId.AgentDangerousCommandBlock].map(id => `@id:${id}`).join(' '),
+	security: [
+		QuantumIDEAISettingId.AgentAutoApplyEdits,
+		QuantumIDEAISettingId.AgentVerifyOnEdit,
+		QuantumIDEAISettingId.AgentEditVelocity,
+		QuantumIDEAISettingId.AgentRequireConfirmationForFileDelete,
+		QuantumIDEAISettingId.AgentDangerousCommandBlock,
+	].map(id => `@id:${id}`).join(' '),
 	appearance: ['workbench.colorTheme', 'workbench.iconTheme', 'window.zoomLevel'].map(id => `@id:${id}`).join(' '),
 	keybindings: ['@tag:keybindingsTag'].join(' '),
 	accounts: ['@tag:accounts'].join(' '),

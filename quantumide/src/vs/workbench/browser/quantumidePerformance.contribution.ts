@@ -67,6 +67,7 @@ function formatPerformanceReportBody(marks: ReturnType<typeof getQuantumIDEPerfo
 	const lines = [
 		localize('quantumide.performance.report', 'QuantumIDE performance (§6 targets):'),
 		`chatStartup: target ${budgets.chatStartup}ms`,
+		`chatContextBuild: target ${budgets.chatContextBuild}ms`,
 		`inlineCompletion: target ${budgets.inlineCompletion}ms`,
 		`semanticRetrieval: target ${budgets.semanticRetrieval}ms`,
 		`diffRendering: target ${budgets.diffRendering}ms`,

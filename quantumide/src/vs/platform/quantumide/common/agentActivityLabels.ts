@@ -141,6 +141,8 @@ export function getAgentActivityKind(toolName: string): AgentActivityKind {
 	switch (toolName) {
 		case 'search_workspace_text':
 		case 'search_workspace_text_batch':
+		case 'search_workspace_files':
+		case 'list_workspace_directory':
 		case 'grep':
 		case 'Grep':
 		case 'codebase_search':

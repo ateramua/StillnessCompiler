@@ -48,6 +48,26 @@ PY
   fi
   echo "OK: packaged workbench.js includes DevTools bootstrap"
 
+  WB_MAIN="$APP/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js"
+  if [[ ! -f "$WB_MAIN" ]]; then
+    echo "ERROR: Missing $WB_MAIN" >&2
+    exit 1
+  fi
+  if grep -q "_autoSaveScheduler" "$WB_MAIN" 2>/dev/null; then
+    echo "ERROR: Packaged workbench still has workspace-session auto-save (_autoSaveScheduler)." >&2
+    echo "       Source was updated but this .app is stale — rerun this script after saving all fixes." >&2
+    exit 1
+  fi
+  if ! grep -q "QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY" "$WB_MAIN" 2>/dev/null; then
+    echo "ERROR: Packaged workbench missing QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY (workspace session fix not bundled)." >&2
+    exit 1
+  fi
+  if ! grep -q "editVelocity" "$WB_MAIN" 2>/dev/null; then
+    echo "ERROR: Packaged workbench missing editVelocity (agent speed enhancements not bundled)." >&2
+    exit 1
+  fi
+  echo "OK: packaged workbench includes workspace-session fix (no auto-save storm)"
+
   echo "==> Installing to /Applications/QuantumIDE.app"
   rm -rf "/Applications/QuantumIDE.app"
   ditto "$APP" "/Applications/QuantumIDE.app"

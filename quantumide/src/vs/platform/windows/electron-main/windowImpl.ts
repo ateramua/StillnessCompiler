@@ -47,7 +47,6 @@ import { VSBuffer } from '../../../base/common/buffer.js';
 import { errorHandler } from '../../../base/common/errors.js';
 import { FocusMode } from '../../native/common/native.js';
 import { Color } from '../../../base/common/color.js';
-import { isQuantumIDEBuild } from '../../quantumide/common/quantumideChatPlatform.js';
 
 export interface IWindowCreationOptions {
 	readonly state: IWindowState;

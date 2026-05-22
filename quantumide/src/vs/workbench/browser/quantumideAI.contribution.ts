@@ -74,6 +74,9 @@ const QUANTUMIDE_SETTINGS_QUERIES: Record<QuantumIDESettingsCategory, string> = 
 		QuantumIDEAISettingId.OpenAIModel,
 		QuantumIDEAISettingId.OpenAIBaseUrl,
 		QuantumIDEAISettingId.AgentMaxContextFiles,
+		QuantumIDEAISettingId.AgentEditVelocity,
+		QuantumIDEAISettingId.AgentVerifyOnEdit,
+		QuantumIDEAISettingId.AgentAutoApplyEdits,
 		QuantumIDEAISettingId.SemanticIndexingEnabled,
 	].map(id => `@id:${id}`).join(' '),
 	editor: [
@@ -97,6 +100,9 @@ const QUANTUMIDE_SETTINGS_QUERIES: Record<QuantumIDESettingsCategory, string> = 
 	].map(id => `@id:${id}`).join(' '),
 	security: [
 		QuantumIDEAISettingId.AgentAutoApplyEdits,
+		QuantumIDEAISettingId.AgentVerifyOnEdit,
+		QuantumIDEAISettingId.AgentEditVelocity,
+		QuantumIDEAISettingId.AgentFastApplyEdits,
 		QuantumIDEAISettingId.AgentRequireConfirmationForTerminal,
 		QuantumIDEAISettingId.AgentRequireConfirmationForFileDelete,
 		QuantumIDEAISettingId.OpenAIApiKeyStorage,
@@ -340,7 +346,7 @@ function registerQuantumIDEAIConfiguration(): void {
 			},
 			[QuantumIDEAISettingId.AgentAutoApplyEdits]: {
 				type: 'boolean',
-				default: false,
+				default: true,
 				scope: ConfigurationScope.RESOURCE,
 				markdownDescription: localize('quantumide.ai.agent.autoApplyEdits', 'Controls whether QuantumIDE agents can apply file edits without a separate approval step. Disabled by default for safety.'),
 			},
@@ -384,6 +390,19 @@ function registerQuantumIDEAIConfiguration(): void {
 				},
 				scope: ConfigurationScope.RESOURCE,
 				markdownDescription: localize('quantumide.ai.indexing.excludePatterns', 'Additional folder or file names excluded from QuantumIDE workspace intelligence indexing. These are local workspace policy rules and are applied before AI context is built.'),
+			},
+			[QuantumIDEAISettingId.IndexingSecretFileNames]: {
+				type: 'array',
+				default: [],
+				items: { type: 'string' },
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.indexing.secretFileNames', 'Extra file names blocked from indexing, @ mentions, and agent reads (in addition to .env and key material).'),
+			},
+			[QuantumIDEAISettingId.IndexingIgnoreFile]: {
+				type: 'string',
+				default: '.quantumideignore',
+				scope: ConfigurationScope.RESOURCE,
+				markdownDescription: localize('quantumide.ai.ignoreFile', 'Unified ignore file (gitignore syntax) for workspace indexing, @ mentions, and agent file tools. See also `quantumide-workspace-discovery-security.md`.'),
 			},
 			[QuantumIDEAISettingId.SemanticIndexingEnabled]: {
 				type: 'boolean',
@@ -441,8 +460,14 @@ function registerQuantumIDEAIConfiguration(): void {
 			[QuantumIDEAISettingId.WorkspaceAutoRestoreSession]: {
 				type: 'boolean',
 				default: false,
-				scope: ConfigurationScope.WORKSPACE,
+				scope: ConfigurationScope.WINDOW,
 				markdownDescription: localize('quantumide.workspace.autoRestoreSession', 'When enabled, QuantumIDE restores the last saved editor layout and open files from `.quantumide/workspace-state` after opening a workspace. Off by default to avoid freezing large workspaces on startup.'),
+			},
+			[QuantumIDEAISettingId.WorkspaceAutoSaveSession]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.WINDOW,
+				markdownDescription: localize('quantumide.workspace.autoSaveSession', 'When enabled, QuantumIDE periodically saves editor layout and open files to `.quantumide/workspace-state`. Off by default; use **QuantumIDE: Save Workspace Session** for manual saves.'),
 			},
 			[QuantumIDEAISettingId.ChatDefaultMode]: {
 				type: 'string',
@@ -547,9 +572,61 @@ function registerQuantumIDEAIConfiguration(): void {
 			},
 			[QuantumIDEAISettingId.AgentInstantPaletteCommands]: {
 				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.instantPalette', 'When enabled (`instantPaletteCommands`), safe palette actions (format, lint, test, merge navigation) run without extra agent confirmation. Destructive git/dependency commands still require confirmation.'),
+			},
+			[QuantumIDEAISettingId.AgentVerifyOnEdit]: {
+				type: 'string',
+				default: 'defer',
+				enum: ['always', 'defer', 'never'],
+				enumDescriptions: [
+					localize('quantumide.agent.verifyOnEdit.always', 'Run compile/lint/test checks after substantive agent edits.'),
+					localize('quantumide.agent.verifyOnEdit.defer', 'Queue verification for manual run (QuantumIDE: Run Deferred Agent Verification).'),
+					localize('quantumide.agent.verifyOnEdit.never', 'Skip automatic verification unless the user requests it.'),
+				],
+				scope: ConfigurationScope.APPLICATION,
+				description: localize('quantumide.agent.verifyOnEdit.description', 'Verify on edit — automatic compile/lint/test after agent file changes (always, defer, or never).'),
+				markdownDescription: localize('quantumide.agent.verifyOnEdit', 'Controls automatic verification after agent file edits. Use **defer** or **never** for fast documentation edits; **always** runs `npm run compile` after code changes.'),
+			},
+			[QuantumIDEAISettingId.AgentPreferDirectEditorEdits]: {
+				type: 'boolean',
 				default: true,
 				scope: ConfigurationScope.APPLICATION,
-				markdownDescription: localize('quantumide.agent.instantPalette', 'Run safe command-palette actions (format, organize imports, tests, merge navigation) without per-tool user confirmation.'),
+				markdownDescription: localize('quantumide.agent.preferDirectEditor', 'Prefer inline editor / manipulate_editor tools for small single-file changes below the line threshold.'),
+			},
+			[QuantumIDEAISettingId.AgentDirectEditorMaxLines]: {
+				type: 'number',
+				default: 100,
+				minimum: 1,
+				maximum: 500,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.directEditorMaxLines', 'Maximum changed lines for preferring direct editor tools over full-file apply_workspace_edits.'),
+			},
+			[QuantumIDEAISettingId.AgentFastApplyEdits]: {
+				type: 'boolean',
+				default: true,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.fastApply', 'Legacy toggle; prefer **Edit velocity**. When true without editVelocity, maps to fast mode.'),
+			},
+			[QuantumIDEAISettingId.AgentEditVelocity]: {
+				type: 'string',
+				default: 'maximum',
+				enum: ['safe', 'fast', 'maximum'],
+				enumDescriptions: [
+					localize('quantumide.agent.editVelocity.safe', 'Full validation, checkpoints, read-before-write, formatting preservation.'),
+					localize('quantumide.agent.editVelocity.fast', 'Skip validation and checkpoints; skip read-before-write on full-file writes.'),
+					localize('quantumide.agent.editVelocity.maximum', 'Fastest: direct writeFile, compact agent prompt, no compile for docs; auto-used for docs/*.html and docs/*.md.'),
+				],
+				scope: ConfigurationScope.APPLICATION,
+				description: localize('quantumide.agent.editVelocity.description', 'Edit velocity — how fast agent writes hit disk (safe, fast, or maximum).'),
+				markdownDescription: localize('quantumide.agent.editVelocity', 'Controls how quickly agent file edits are written to disk. **maximum** is recommended for user-guide and docs work.'),
+			},
+			[QuantumIDEAISettingId.AgentWaitForIndexingBeforeEdits]: {
+				type: 'boolean',
+				default: false,
+				scope: ConfigurationScope.APPLICATION,
+				markdownDescription: localize('quantumide.agent.waitIndexing', 'When semantic indexing is enabled, block apply_workspace_edits until `.quantumide/indexing-status.json` reports ready.'),
 			},
 			[QuantumIDEAISettingId.AgentEditorContextSnapshot]: {
 				type: 'boolean',

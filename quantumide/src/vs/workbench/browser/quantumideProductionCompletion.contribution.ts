@@ -12,6 +12,7 @@ import { IQuickInputService } from '../../platform/quickinput/common/quickInput.
 import { IFileDialogService } from '../../platform/dialogs/common/dialogs.js';
 import { VSBuffer } from '../../base/common/buffer.js';
 import { IFileService } from '../../platform/files/common/files.js';
+import { isBenignQuantumIDERendererError } from '../../platform/quantumide/common/quantumideBenignErrors.js';
 import { isQuantumIDEProduct } from '../../platform/quantumide/common/quantumideChatPlatform.js';
 import { QuantumIDEAICommandId } from '../../platform/quantumide/common/quantumideAISettings.js';
 import { registerWorkbenchContribution2, WorkbenchPhase, type IWorkbenchContribution } from '../common/contributions.js';
@@ -43,14 +44,21 @@ class QuantumIDEErrorBoundaryContribution extends Disposable implements IWorkben
 			return;
 		}
 		const onError = (event: ErrorEvent) => {
+			const message = event.message || 'Unhandled error';
+			if (isBenignQuantumIDERendererError(message)) {
+				return;
+			}
 			this._errors.report({
 				id: `window-${Date.now()}`,
-				message: event.message || 'Unhandled error',
+				message,
 				recoverable: false,
 			});
 		};
 		const onRejection = (event: PromiseRejectionEvent) => {
 			const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
+			if (isBenignQuantumIDERendererError(reason)) {
+				return;
+			}
 			this._errors.report({
 				id: `promise-${Date.now()}`,
 				message: reason,
@@ -250,14 +258,25 @@ if (isQuantumIDE()) {
 			});
 		}
 		override async run(accessor: ServicesAccessor): Promise<void> {
-			const sections = accessor.get(IQuantumIDEContextInspectorService).getSections();
+			const inspector = accessor.get(IQuantumIDEContextInspectorService);
+			const sections = inspector.getSections();
 			if (!sections.length) {
 				accessor.get(INotificationService).info(localize('quantumide.context.empty', 'Reload chat context first (QuantumIDE: Reload Chat Context).'));
 				await accessor.get(ICommandService).executeCommand('quantumide.chat.reloadContext');
 				return;
 			}
-			const body = sections.map(s => `${s.title}: ${s.charCount} chars${s.omitted ? ' (omitted)' : ''}`).join('\n');
-			accessor.get(INotificationService).info(body.slice(0, 6000));
+			const lines: string[] = [];
+			if (inspector.isContextStale()) {
+				lines.push(localize('quantumide.context.stale', 'Context is stale — reload before the next agent turn.'));
+			}
+			const omittedIds = inspector.getOmittedSectionIds();
+			if (omittedIds.length > 0) {
+				lines.push(localize('quantumide.context.omittedIds', 'Omitted section ids: {0}', omittedIds.join(', ')));
+			}
+			for (const s of sections) {
+				lines.push(`${s.omitted ? s.id + ' — ' : ''}${s.title}: ${s.charCount} chars${s.omitted ? ' (omitted)' : ''}${s.stale ? ' (stale)' : ''}`);
+			}
+			accessor.get(INotificationService).info(lines.join('\n').slice(0, 6000));
 		}
 	});
 

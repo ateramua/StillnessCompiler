@@ -13,7 +13,7 @@ echo "== Phase 3: Transpile (required for mocha out/*.js tests) =="
 ./scripts/ensure-node22.sh npm run transpile-client
 echo "Transpile OK."
 
-PARITY_GLOB='**/vs/platform/quantumide/test/common/{quantumideCollabPresenceUtils,quantumideInlineSuggestionState,quantumideIdeSettingPolicy,quantumideCursorParityProgramPhase3,quantumideDiffHunks,quantumideCommandPolicy,agentActivityProgress}.test.js'
+PARITY_GLOB='**/vs/platform/quantumide/test/common/{quantumideCollabPresenceUtils,quantumideInlineSuggestionState,quantumideIdeSettingPolicy,quantumideCursorParityProgramPhase3,quantumideDiffHunks,quantumideCommandPolicy,agentActivityProgress,quantumideWorkflowOptimization}.test.js'
 
 echo "== Phase 3: Run parity program unit tests =="
 ./scripts/ensure-node22.sh node test/unit/node/index.js --runGlob "$PARITY_GLOB"

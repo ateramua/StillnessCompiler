@@ -1064,6 +1064,7 @@ export class ChatService extends Disposable implements IChatService {
 		});
 
 		let gotProgress = false;
+		let streamChunkIndex = 0;
 		const requestType = commandPart ? 'slashCommand' : 'string';
 
 		const responseCreated = new DeferredPromise<IChatResponseModel>();
@@ -1088,6 +1089,18 @@ export class ChatService extends Disposable implements IChatService {
 					markChat(sessionResource, ChatPerfMark.FirstToken);
 				}
 				gotProgress = true;
+
+				let chunkChars = 0;
+				for (const progressItem of progress) {
+					if (progressItem.kind === 'markdownContent') {
+						chunkChars += progressItem.content.value.length;
+					}
+				}
+				markChat(sessionResource, ChatPerfMark.StreamChunkReceived, {
+					chars: chunkChars,
+					chunkIndex: streamChunkIndex++,
+					requestId: request?.id,
+				});
 
 				for (let i = 0; i < progress.length; i++) {
 					const isLast = i === progress.length - 1;

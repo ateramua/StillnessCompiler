@@ -557,6 +557,18 @@ export function toPromptFileVariableEntry(uri: URI, kind: PromptFileVariableKind
 
 enum PromptTextVariableKind {
 	CustomizationsIndex = 'vscode.customizations.index',
+	QuantumIDEChatRules = 'quantumide.chat.rules',
+}
+
+export function toQuantumIDEChatRulesPromptTextEntry(content: string): IPromptTextVariableEntry {
+	return {
+		id: PromptTextVariableKind.QuantumIDEChatRules,
+		name: 'prompt:quantumide-rules',
+		value: content,
+		kind: 'promptText',
+		modelDescription: 'QuantumIDE workspace rules (Always / Auto / Manual)',
+		automaticallyAdded: true,
+	};
 }
 
 export function toPromptTextVariableEntry(content: string, automaticallyAdded = false, toolReferences?: ChatRequestToolReferenceEntry[]): IPromptTextVariableEntry {
@@ -577,6 +589,18 @@ export function toFileVariableEntry(uri: URI, range?: IRange): IChatRequestFileE
 		value: range ? { uri, range } : uri,
 		id: uri.toString() + (range?.toString() ?? ''),
 		name: basename(uri),
+	};
+}
+
+/** M-10: workspace-relative path for chat context (resolved at send via multi-root rules). */
+export function toWorkspaceVariableEntry(workspaceRelativePath: string, label?: string): IChatRequestWorkspaceVariableEntry {
+	const normalized = workspaceRelativePath.replace(/\\/g, '/');
+	const name = label ?? normalized;
+	return {
+		kind: 'workspace',
+		id: `workspace:${normalized}`,
+		name,
+		value: normalized,
 	};
 }
 

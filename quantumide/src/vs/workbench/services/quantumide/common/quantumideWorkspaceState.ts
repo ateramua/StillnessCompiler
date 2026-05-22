@@ -3,11 +3,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
+import { joinPath } from '../../../../base/common/resources.js';
+import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 
 export const QUANTUMIDE_WORKSPACE_STATE_VERSION = 1;
 export const QUANTUMIDE_WORKSPACE_STATE_STORAGE_KEY = 'quantumide.workspaceState.latest';
+/** Full session payload fallback when `.quantumide/workspace-state` on disk is unavailable. */
+export const QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY = 'quantumide.workspaceState.payload';
+/** @deprecated Use {@link quantumIDEWorkspaceStateRoot} — single-segment join breaks on some paths. */
 export const QUANTUMIDE_WORKSPACE_STATE_DIR = '.quantumide/workspace-state';
+
+export function quantumIDEWorkspaceStateRoot(folderUri: URI): URI {
+	return joinPath(joinPath(folderUri, '.quantumide'), 'workspace-state');
+}
 export const QUANTUMIDE_SESSION_WORKING_SET_NAME = 'QuantumIDE Session';
 
 export interface IQuantumIDEWorkspacePartLayoutState {
@@ -47,6 +56,13 @@ export interface IQuantumIDEWorkspaceStatePayload {
 	readonly fileTreeExpanded: readonly string[];
 }
 
+export interface IQuantumIDEWorkspaceStatePersistOptions {
+	/** When true, snapshots editor working sets (heavier; use for manual save only). */
+	readonly captureWorkingSet?: boolean;
+	/** When true, callers may surface failure to the user (manual Save Workspace Session only). */
+	readonly notifyOnFailure?: boolean;
+}
+
 export interface IQuantumIDEWorkspaceStateMeta {
 	readonly savedAt: number;
 	readonly label?: string;
@@ -57,11 +73,12 @@ export interface IQuantumIDEWorkspaceStateService {
 	readonly _serviceBrand: undefined;
 	readonly onDidChange: Event<void>;
 	getLastSavedMeta(): IQuantumIDEWorkspaceStateMeta | undefined;
-	captureState(label?: string): Promise<IQuantumIDEWorkspaceStatePayload>;
-	persistState(label?: string): Promise<IQuantumIDEWorkspaceStateMeta | undefined>;
+	captureState(label?: string, options?: IQuantumIDEWorkspaceStatePersistOptions): Promise<IQuantumIDEWorkspaceStatePayload>;
+	persistState(label?: string, options?: IQuantumIDEWorkspaceStatePersistOptions): Promise<IQuantumIDEWorkspaceStateMeta | undefined>;
 	restoreLastState(): Promise<{ ok: boolean; error?: string }>;
 	listHistory(): Promise<readonly IQuantumIDEWorkspaceStateMeta[]>;
 	restoreFromHistory(savedAt: number): Promise<{ ok: boolean; error?: string }>;
+	/** @deprecated No-op; session save is manual via **QuantumIDE: Save Workspace Session**. */
 	scheduleAutoSave(): void;
 }
 

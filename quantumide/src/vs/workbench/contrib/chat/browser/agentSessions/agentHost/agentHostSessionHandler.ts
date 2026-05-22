@@ -41,7 +41,7 @@ import { ITerminalChatService } from '../../../../terminal/browser/terminal.js';
 import { IChatWidgetService } from '../../chat.js';
 import { ChatRequestQueueKind, ConfirmedReason, ElicitationState, IChatProgress, IChatQuestion, IChatQuestionAnswers, IChatService, IChatToolInvocation, ToolConfirmKind, type IChatMultiSelectAnswer, type IChatQuestionAnswerValue, type IChatSingleSelectAnswer, type IChatTerminalToolInvocationData } from '../../../common/chatService/chatService.js';
 import { IChatSession, IChatSessionContentProvider, IChatSessionHistoryItem, IChatSessionItem, IChatSessionRequestHistoryItem, type IChatInputCompletionItem, type IChatInputCompletionsParams, type IChatInputCompletionsResult } from '../../../common/chatSessionsService.js';
-import { isImageVariableEntry, type IChatRequestVariableEntry, type IImageVariableEntry } from '../../../common/attachments/chatVariableEntries.js';
+import { isImageVariableEntry, isWorkspaceVariableEntry, type IChatRequestVariableEntry, type IImageVariableEntry } from '../../../common/attachments/chatVariableEntries.js';
 import { coerceImageBuffer } from '../../../common/chatImageExtraction.js';
 import { getChatSessionType } from '../../../common/model/chatUri.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind } from '../../../common/constants.js';
@@ -50,11 +50,13 @@ import { formatReviewSummary } from '../../../../../../platform/quantumide/commo
 import { getQuantumIDEChatModeSystemAddon } from '../../../../../../platform/quantumide/common/quantumideChatPlatform.js';
 import { ISCMService } from '../../../../scm/common/scm.js';
 import { loadQuantumIDEWorkspacePolicies } from '../../../../../../platform/quantumide/common/quantumideWorkspacePolicies.js';
+import { resolveQuantumIDEWorkspaceVariablePath } from '../../../../../../platform/quantumide/common/quantumideWorkspaceRoots.js';
 import { IChatEditingService } from '../../../common/editing/chatEditingService.js';
 import { ChatElicitationRequestPart } from '../../../common/model/chatProgressTypes/chatElicitationRequestPart.js';
 import { ChatQuestionCarouselData } from '../../../common/model/chatProgressTypes/chatQuestionCarouselData.js';
 import { ChatToolInvocation } from '../../../common/model/chatProgressTypes/chatToolInvocation.js';
 import { type IChatRequestVariableData } from '../../../common/model/chatModel.js';
+import { ChatPerfMark, markChat } from '../../../common/chatPerf.js';
 import { IChatAgentData, IChatAgentImplementation, IChatAgentRequest, IChatAgentResult, IChatAgentService } from '../../../common/participants/chatAgents.js';
 import { ILanguageModelsService } from '../../../common/languageModels.js';
 import { ILanguageModelToolsService, IToolData, IToolInvocation, IToolResult, ToolInvocationPresentation } from '../../../common/tools/languageModelToolsService.js';
@@ -75,6 +77,7 @@ import { shouldReplaceSessionActivityMessage } from '../../../../../../platform/
 import { IQuantumIDEExecutionGraphService } from '../../../../../services/quantumide/common/quantumideExecutionGraph.js';
 import { IQuantumIDEAgentTaskOrchestratorService } from '../../../../../services/quantumide/common/quantumideAgentTask.js';
 import { IQuantumIDEChatContextOrchestrator } from '../../../../../services/quantumide/common/quantumideChatContext.js';
+import { IQuantumIDERecentlyViewedFilesService } from '../../../../../services/quantumide/common/quantumideRecentlyViewedFiles.js';
 import { IQuantumIDEDiffReviewService } from '../../../../../services/quantumide/browser/quantumideDiffReviewService.js';
 import {
 	buildAgentTasksAttachment,
@@ -443,6 +446,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		@ILanguageModelsService private readonly _languageModelsService: ILanguageModelsService,
 		@IOpenerService private readonly _openerService: IOpenerService,
 		@IQuantumIDEChatContextOrchestrator private readonly _quantumIDEChatContextOrchestrator: IQuantumIDEChatContextOrchestrator,
+		@IQuantumIDERecentlyViewedFilesService private readonly _recentlyViewedFiles: IQuantumIDERecentlyViewedFilesService,
 		@ISCMService private readonly _scmService: ISCMService,
 		@IFileService private readonly _fileService: IFileService,
 		@IStorageService private readonly _storageService: IStorageService,
@@ -1117,7 +1121,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		const turnId = request.requestId;
 		this._clientDispatchedTurnIds.add(turnId);
 		const messageAttachments = await this._convertVariablesToAttachments(request);
-		await this._appendQuantumIDEChatContextAttachment(messageAttachments, request.message);
+		await this._appendQuantumIDEChatContextAttachment(messageAttachments, request.sessionResource, request.message);
 		await this._appendQuantumIDEChatModeAttachment(messageAttachments, request);
 		await this._appendWorkspacePoliciesAttachment(messageAttachments);
 		await this._appendAgentVelocityAttachments(messageAttachments);
@@ -2908,9 +2912,12 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			return;
 		}
 		const workspaceFolder = this._workspaceContextService.getWorkspace().folders[0]?.uri;
+		const activeRelativePaths = this._recentlyViewedFiles.getRecent(24)
+			.map(e => e.workspaceRelativePath)
+			.filter((p): p is string => typeof p === 'string' && p.length > 0);
 		try {
 			if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.AgentVelocityAttachRules) !== false) {
-				const rules = await buildQuantumIDEAgentRulesAttachments(this._fileService, workspaceFolder);
+				const rules = await buildQuantumIDEAgentRulesAttachments(this._fileService, workspaceFolder, activeRelativePaths);
 				for (let i = rules.length - 1; i >= 0; i--) {
 					attachments.unshift(rules[i]);
 				}
@@ -2930,7 +2937,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		}
 	}
 
-	private async _appendQuantumIDEChatContextAttachment(attachments: MessageAttachment[], userQuery?: string): Promise<void> {
+	private async _appendQuantumIDEChatContextAttachment(attachments: MessageAttachment[], sessionResource: URI, userQuery?: string): Promise<void> {
 		if (!isQuantumIDEProduct(this._productService.applicationName)) {
 			return;
 		}
@@ -2938,6 +2945,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 			return;
 		}
 		try {
+			markChat(sessionResource, ChatPerfMark.ContextBuildWillStart);
 			const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget);
 			const maxChars = typeof tokenBudget === 'number' && tokenBudget > 1000 ? Math.min(tokenBudget, 24_000) : 14_000;
 			const context = await this._quantumIDEChatContextOrchestrator.buildChatContext({
@@ -2950,6 +2958,12 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				includeNavigationHistory: true,
 				userQuery,
 			});
+			const partial = context.includes('[QuantumIDE] Partial context');
+			markChat(sessionResource, ChatPerfMark.ContextBuildDidComplete, {
+				chars: context.length,
+				detail: partial ? 'degraded' : undefined,
+				partial,
+			});
 			if (!context.trim()) {
 				return;
 			}
@@ -2960,6 +2974,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 				_meta: { source: 'quantumide-workspace-intelligence', automatic: true },
 			});
 		} catch (error) {
+			markChat(sessionResource, ChatPerfMark.ContextBuildDidComplete, { detail: 'failed' });
 			this._logService.warn('[AgentHost] Failed to build QuantumIDE chat context attachment', error);
 		}
 	}
@@ -3057,6 +3072,15 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
 		// Prompt files (.prompt.md) — treated as a referenced document.
 		if (v.kind === 'promptFile' && v.value instanceof URI) {
 			return this._toResourceAttachment(v.value, v.name, 'document', sessionResource, v._meta);
+		}
+		if (isWorkspaceVariableEntry(v)) {
+			const folders = this._workspaceContextService.getWorkspace().folders;
+			const uri = resolveQuantumIDEWorkspaceVariablePath(v.value, folders);
+			if (!uri) {
+				this._logService.warn(`[AgentHost] Workspace variable path could not be resolved: ${v.value}`);
+				return this._toSimpleAttachment(v.name, `[unresolved workspace path: ${v.value}]`, v._meta);
+			}
+			return this._toResourceAttachment(uri, v.name, 'document', sessionResource, v._meta);
 		}
 		// Image: send inline as base64 when we have the bytes; otherwise fall
 		// back to a file resource reference.

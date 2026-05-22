@@ -10,6 +10,8 @@ Last updated: 2026-05-20 (Option B program — Phase 3 tests + verify script com
 
 **Cursor agent parity doc:** [quantumide-cursor-agent-seven-requirements-parity.md](./quantumide-cursor-agent-seven-requirements-parity.md)
 
+**Workflow optimization (7 requirements):** [quantumide-workflow-optimization-requirements.md](./quantumide-workflow-optimization-requirements.md)
+
 **Chat eight-features doc:** [quantumide-chat-eight-features-parity.md](./quantumide-chat-eight-features-parity.md)
 
 **Task phase status doc:** [quantumide-agent-task-phase-status.md](./quantumide-agent-task-phase-status.md)
@@ -47,7 +49,8 @@ Last updated: 2026-05-20 (Option B program — Phase 3 tests + verify script com
 |----|-------------|--------|----------------|
 | 3.1 | Multi-step autonomous execution | Done (task phase status) | Orchestrator + execution graph + **status bar task phases** (`quantumideAgentTaskPhaseStatus`) + post-apply verify |
 | 3.2 | Workspace-wide LSP refactors | Done (7-req parity) | `quantumide.chat.lsp.renameSymbol` → `editor.action.rename` + `AgentPreferLspRename` host guidance |
-| 3.3 | Direct editor UI + instant commands | Done (7-req parity) | `quantumideAgentSevenRequirements.contribution.ts`, inline diff, merge UI inject, `quantumide_move_workspace_files`, instant palette allowlist |
+| 3.3 | Direct editor UI + instant commands | Done (7-req + workflow opt) | `quantumideAgentSevenRequirements.contribution.ts`, `quantumideWorkflowOptimization.ts`, instant palette (`instantPaletteCommands`), direct editor threshold, fast apply |
+| 3.9 | Workflow optimization (7 features) | Done | [quantumide-workflow-optimization-requirements.md](./quantumide-workflow-optimization-requirements.md) — auto-apply, verifyOnEdit, **editVelocity** (safe/fast/maximum), batch edits, indexing gate, LSP rename |
 | 3.4 | Live editor context for agent | Done (8-feature parity) | `.quantumide/agent-context.json` + open buffers in snapshot + `quantumide_get_open_buffers` |
 | 3.5 | Editor manipulation + unsaved buffers | Done (8-feature parity) | `quantumide_manipulate_editor`, `quantumide_read/write_unsaved_buffer` |
 | 3.6 | LSP workspace rename (preview/undo) | Done (Option B) | `quantumide_lsp_workspace_rename` + `apply:true` + checkpoint |
@@ -62,7 +65,7 @@ Last updated: 2026-05-20 (Option B program — Phase 3 tests + verify script com
 
 | ID | Requirement | Status | Implementation |
 |----|-------------|--------|----------------|
-| 4.1 | Real-time incremental indexing | Done (Cursor parity) | Chunked scanner + worker scheduler + **per-file AST incremental** (Tree-sitter adapter) + `quantumide-index-search-fixture.sh` |
+| 4.1 | Real-time incremental indexing | Done (Cursor parity) | Chunked scanner + worker scheduler + **per-file AST incremental** (Tree-sitter adapter) + `quantumide-index-search-fixture.sh`; **multi-root agent visibility**: `quantumideWorkspaceRootsSync.contribution`, lite snapshot when indexing off |
 | 4.2 | Semantic & symbol search | Done (Cursor parity) | Unified search + **signature preview** + `quantumide.chat.searchWithPreview` / `quantumide.search.openHit` |
 
 **Deferred:** QPR-4.1.005 million-LOC repo fixture (10k-path P95 gate in CI).

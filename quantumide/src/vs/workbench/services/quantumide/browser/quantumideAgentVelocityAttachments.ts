@@ -6,11 +6,11 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import type { IFileService } from '../../../../platform/files/common/files.js';
 import { MessageAttachmentKind, type MessageAttachment } from '../../../../platform/agentHost/common/state/sessionState.js';
+import { buildQuantumIDEChatRulesContextBundle } from '../../../../platform/quantumide/common/quantumideChatRulesContext.js';
 import {
 	QUANTUMIDE_AGENT_HANDOFF_FILE,
 	QUANTUMIDE_AGENT_TASKS_FILE,
 	QUANTUMIDE_PINNED_TASK_SPEC_STORAGE_KEY,
-	QUANTUMIDE_RULES_DIR,
 } from '../../../../platform/quantumide/common/agentVelocity.js';
 import type { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 
@@ -21,59 +21,33 @@ const MAX_HANDOFF_CHARS = 4_000;
 export async function buildQuantumIDEAgentRulesAttachments(
 	fileService: IFileService,
 	workspaceFolder: URI | undefined,
+	activeRelativePaths: readonly string[] = [],
 ): Promise<MessageAttachment[]> {
 	if (!workspaceFolder) {
 		return [];
 	}
 	const attachments: MessageAttachment[] = [];
-	const agentsMd = joinPath(workspaceFolder, 'AGENTS.md');
-	try {
-		const content = (await fileService.readFile(agentsMd)).value.toString().trim();
-		if (content) {
-			attachments.push({
-				type: MessageAttachmentKind.Simple,
-				label: 'AGENTS.md',
-				modelRepresentation: content.slice(0, MAX_RULES_CHARS),
-				_meta: { source: 'quantumide-agent-velocity', kind: 'agents-md' },
-			});
-		}
-	} catch {
-		// optional
+	const { agentsMdContent, rulesPromptText } = await buildQuantumIDEChatRulesContextBundle(
+		fileService,
+		workspaceFolder,
+		activeRelativePaths,
+		MAX_RULES_CHARS,
+	);
+	if (agentsMdContent) {
+		attachments.push({
+			type: MessageAttachmentKind.Simple,
+			label: 'AGENTS.md',
+			modelRepresentation: agentsMdContent,
+			_meta: { source: 'quantumide-agent-velocity', kind: 'agents-md' },
+		});
 	}
-	const rulesDir = joinPath(workspaceFolder, QUANTUMIDE_RULES_DIR);
-	try {
-		const resolved = await fileService.resolve(rulesDir);
-		const parts: string[] = [];
-		let remaining = MAX_RULES_CHARS;
-		for (const child of resolved.children ?? []) {
-			if (!child.isDirectory && child.name.endsWith('.md')) {
-				try {
-					const text = (await fileService.readFile(child.resource)).value.toString().trim();
-					if (!text) {
-						continue;
-					}
-					const section = `## ${child.name}\n\n${text}`;
-					const clipped = section.slice(0, remaining);
-					if (!clipped) {
-						break;
-					}
-					parts.push(clipped);
-					remaining -= clipped.length;
-				} catch {
-					// skip
-				}
-			}
-		}
-		if (parts.length) {
-			attachments.push({
-				type: MessageAttachmentKind.Simple,
-				label: 'QuantumIDE workspace rules',
-				modelRepresentation: parts.join('\n\n'),
-				_meta: { source: 'quantumide-agent-velocity', kind: 'rules' },
-			});
-		}
-	} catch {
-		// no rules dir
+	if (rulesPromptText) {
+		attachments.push({
+			type: MessageAttachmentKind.Simple,
+			label: 'QuantumIDE workspace rules (Always / Auto / Manual)',
+			modelRepresentation: rulesPromptText,
+			_meta: { source: 'quantumide-agent-velocity', kind: 'rules' },
+		});
 	}
 	return attachments;
 }

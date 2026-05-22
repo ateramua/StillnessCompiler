@@ -498,6 +498,8 @@ export class QuantumIDEChatParityDock extends Disposable {
 				sessionMeta?.openFileCount,
 				this._contextInspector.getSections(),
 				this._contextInspector.getLastBuiltAt(),
+				this._contextInspector.isContextStale(),
+				this._contextInspector.getOmittedSectionIds(),
 				!this._offline.getState().online,
 				this._backgroundIndexer.getProgress(),
 				this._commandService,

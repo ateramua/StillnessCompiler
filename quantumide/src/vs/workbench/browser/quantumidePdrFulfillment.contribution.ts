@@ -71,11 +71,28 @@ if (isQuantumIDE()) {
 			const quick = accessor.get(IQuickInputService);
 			const h = health.getSnapshot();
 			const sections = inspector.getSections();
+			const omittedIds = inspector.getOmittedSectionIds();
 			const items = sections.map(s => ({
-				label: s.title,
-				description: s.omitted ? localize('omitted', 'Omitted') : `${s.charCount} chars · ~${s.tokenEstimate ?? Math.ceil(s.charCount / 4)} tokens`,
+				label: s.omitted ? `${s.id} — ${s.title}` : s.title,
+				description: s.omitted
+					? localize('omittedId', 'Omitted ({0})', s.id)
+					: `${s.charCount} chars · ~${s.tokenEstimate ?? Math.ceil(s.charCount / 4)} tokens`,
 				detail: s.stale ? localize('stale', 'Stale') : (s.error ?? ''),
 			}));
+			if (omittedIds.length > 0) {
+				items.unshift({
+					label: localize('quantumide.contextOmittedSummary', 'Omitted section ids'),
+					description: omittedIds.join(', '),
+					detail: '',
+				});
+			}
+			if (inspector.isContextStale()) {
+				items.unshift({
+					label: localize('quantumide.contextStaleBanner', 'Context stale'),
+					description: localize('quantumide.contextStaleHint', 'Reload context before sending'),
+					detail: '',
+				});
+			}
 			items.unshift({
 				label: localize('quantumide.contextHealth', 'Context health: {0}', h.state),
 				description: h.lastBuiltAt ? new Date(h.lastBuiltAt).toLocaleString() : '',

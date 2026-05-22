@@ -3,6 +3,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Event } from '../../../../base/common/event.js';
+import { URI } from '../../../../base/common/uri.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import type { IQuantumIDEAstIndex, IQuantumIDESemanticIndex } from '../../../../platform/quantumide/common/quantumideSemanticIndex.js';
 import type { IQuantumIDEDependencyGraph } from '../../../../platform/quantumide/common/quantumideDependencyGraph.js';
@@ -19,6 +20,8 @@ export interface IQuantumIDESemanticIndexService {
 	getCommentsIndex(): IQuantumIDECommentsIndex | undefined;
 	getDiagnosticsIndex(): IQuantumIDEDiagnosticsIndex | undefined;
 	refreshIndexes(reason?: string): Promise<void>;
+	/** M-29: re-index one file (semantic, AST, symbols, comments); invoked from indexer worker queue. */
+	incrementalUpdateFile(resource: URI): Promise<void>;
 	searchSemantic(query: string, maxResults?: number): Promise<readonly { path: string; score: number }[]>;
 	searchVector(query: string, maxResults?: number): Promise<readonly { path: string; score: number }[]>;
 	searchComments(query: string, maxResults?: number): Promise<readonly { path: string; line: number; text: string; kind: string }[]>;

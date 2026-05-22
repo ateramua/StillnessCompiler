@@ -11,6 +11,7 @@ import {
 	IQuantumIDEContextHealthService,
 	IQuantumIDEContextHealthSnapshot,
 } from '../common/quantumideContextHealth.js';
+import { IQuantumIDEContextInspectorService } from '../common/quantumideContextInspector.js';
 import { IQuantumIDEErrorRecoveryService } from '../common/quantumideErrorRecovery.js';
 
 export class QuantumIDEContextHealthService extends Disposable implements IQuantumIDEContextHealthService {
@@ -73,9 +74,9 @@ export class QuantumIDEContextHealthService extends Disposable implements IQuant
 	async reloadContext(options?: { userQuery?: string }): Promise<string> {
 		try {
 			const body = await this._getOrchestrator().buildChatContext({ userQuery: options?.userQuery });
-			const omittedMatch = body.match(/Omitted sections \((\d+)\)/);
-			const omitted = omittedMatch ? parseInt(omittedMatch[1], 10) : 0;
-			const sections = (body.match(/^## /gm) ?? []).length;
+			const inspector = this._instantiationService.invokeFunction(accessor => accessor.get(IQuantumIDEContextInspectorService));
+			const omitted = inspector.getOmittedSectionIds().length;
+			const sections = inspector.getSections().filter(s => !s.omitted).length;
 			this.recordSuccess(sections, omitted, body.includes('unsaved'));
 			return body;
 		} catch (err) {

@@ -602,6 +602,8 @@ export function renderAiWorkflowsSection(
 	sessionFileCount: number | undefined,
 	contextSections: readonly IQuantumIDEContextInspectorSection[],
 	contextBuiltAt: number | undefined,
+	contextStale: boolean,
+	omittedSectionIds: readonly string[],
 	offline: boolean,
 	indexProgress: { busy: boolean; percent?: number; indexedFiles: number } | undefined,
 	commandService: ICommandService,
@@ -639,13 +641,27 @@ export function renderAiWorkflowsSection(
 		if (contextBuiltAt) {
 			append(inspector, $('p.quantumide-parity-muted', {}, localize('quantumide.parity.contextBuilt', 'Context built {0}', new Date(contextBuiltAt).toLocaleTimeString())));
 		}
+		if (contextStale) {
+			append(inspector, $('p.quantumide-parity-context-stale-banner', {}, localize('quantumide.parity.contextStaleBanner', 'Context is stale — reload before the next agent turn.')));
+		}
+		if (omittedSectionIds.length > 0) {
+			append(inspector, $('p.quantumide-parity-context-omitted-ids', {}, localize(
+				'quantumide.parity.contextOmittedIds',
+				'Omitted from prompt ({0}): {1}',
+				omittedSectionIds.length,
+				omittedSectionIds.join(', '),
+			)));
+		}
 		for (const section of contextSections) {
 			const row = append(inspector, $('.quantumide-parity-context-section-row'));
-			append(row, $('span', {}, section.title));
+			append(row, $('span', {}, section.omitted ? `${section.id} — ${section.title}` : section.title));
 			const meta = append(row, $('span.quantumide-parity-muted', {}, `${section.charCount} chars`));
 			if (section.omitted) {
 				meta.classList.add('quantumide-parity-context-section-omitted');
 				meta.textContent += ' · ' + localize('quantumide.parity.contextOmitted', 'omitted');
+			}
+			if (section.stale) {
+				meta.textContent += ' · ' + localize('quantumide.parity.contextStale', 'stale — reload context');
 			}
 		}
 	}

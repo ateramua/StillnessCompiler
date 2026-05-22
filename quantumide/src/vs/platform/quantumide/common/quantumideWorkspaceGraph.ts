@@ -71,12 +71,19 @@ export interface IQuantumIDEFileNode {
 	readonly extension?: string;
 }
 
+export interface IQuantumIDEWorkspaceRootScanSummary {
+	readonly folderName: string;
+	readonly filesIndexed: number;
+	readonly truncated: boolean;
+}
+
 export interface IQuantumIDEWorkspaceGraphStatus {
 	readonly indexed: boolean;
 	readonly generatedAt?: string;
 	readonly reason?: string;
 	readonly truncated?: boolean;
 	readonly fileLimit?: number;
+	readonly perRoot?: readonly IQuantumIDEWorkspaceRootScanSummary[];
 }
 
 export interface IQuantumIDEWorkspaceGraph {

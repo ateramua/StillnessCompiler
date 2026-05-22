@@ -15,9 +15,15 @@ import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IMarkerService, MarkerSeverity } from '../../../../platform/markers/common/markers.js';
 import { markQuantumIDEPerformanceEnd, markQuantumIDEPerformanceStart, QuantumIDEPerformanceMark } from '../../../../platform/quantumide/common/quantumidePerformanceMarks.js';
-import { assertWithinBudget, QuantumIDEPerformanceBudgetMs, runWithBudget } from '../../../../platform/quantumide/common/quantumidePerformanceBudgets.js';
-import { formatDependencyGraphSummary } from '../../../../platform/quantumide/common/quantumideDependencyGraph.js';
-import { formatDiagnosticsIndexSummary } from '../../../../platform/quantumide/common/quantumideIndexAugment.js';
+import {
+	appendPartialContextFooter,
+	assertWithinBudget,
+	discoveryBudgetDeadlineMs,
+	isDiscoveryBudgetExceeded,
+	QuantumIDEPerformanceBudgetMs,
+	runDiscoveryWithinBudget,
+} from '../../../../platform/quantumide/common/quantumidePerformanceBudgets.js';
+import { buildSemanticIndexFeedContextSections } from '../../../../platform/quantumide/common/quantumideSemanticIndexFeed.js';
 import {
 	formatProjectManifestSummaries,
 	manifestNodesToSummaryRequests,
@@ -26,12 +32,15 @@ import {
 import { formatRankedContext, rankAndTrimContextSections, type IQuantumIDEContextSection } from '../../../../platform/quantumide/common/quantumideContextRanker.js';
 import { analyzeTerminalOutput, formatTerminalInsights } from '../../../../platform/quantumide/common/quantumideTerminalAnalysis.js';
 import { QuantumIDEAISettingId } from '../../../../platform/quantumide/common/quantumideAISettings.js';
+import { formatQuantumIDEWorkspaceTrustWarningForContext } from '../../../../platform/quantumide/common/quantumideWorkspaceTrust.js';
+import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor, SideBySideEditor } from '../../../common/editor.js';
 import { ITerminalService } from '../../../contrib/terminal/browser/terminal.js';
 import { IEditorService } from '../../editor/common/editorService.js';
 import { IHistoryService } from '../../history/common/history.js';
 import { IWorkingCopyHistoryService } from '../../workingCopy/common/workingCopyHistory.js';
+import { IQuantumIDERecentlyViewedFilesService } from '../common/quantumideRecentlyViewedFiles.js';
 import { IQuantumIDEWorkspaceContextService } from '../common/quantumideWorkspaceContext.js';
 import { IQuantumIDEChatContextBuildOptions, IQuantumIDEChatContextOrchestrator } from '../common/quantumideChatContext.js';
 import { IQuantumIDEEditorStateService } from './quantumideEditorStateService.js';
@@ -40,9 +49,12 @@ import { IQuantumIDELspSymbolIndexService } from '../common/quantumideLspSymbolI
 import { IQuantumIDESemanticIndexService } from '../common/quantumideSemanticIndex.js';
 import { IQuantumIDEWorkspaceSymbolIndexService } from '../common/quantumideWorkspaceSymbolIndex.js';
 import { IQuantumIDEContextHealthService } from '../common/quantumideContextHealth.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { formatQuantumIDEWorkspaceDiscoveryLog } from '../../../../platform/quantumide/common/quantumideWorkspaceDiscoveryLog.js';
 import { IQuantumIDEContextInspectorService } from '../common/quantumideContextInspector.js';
 import { IQuantumIDENavigationHistoryService } from '../common/quantumideNavigationHistory.js';
 import { ITextFileService } from '../../textfile/common/textfiles.js';
+import { IMcpService } from '../../../contrib/mcp/common/mcpTypes.js';
 
 const MAX_OPEN_TABS = 12;
 const MAX_NAVIGATION_ENTRIES = 8;
@@ -79,24 +91,30 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 		@IQuantumIDEContextInspectorService private readonly _contextInspector: IQuantumIDEContextInspectorService,
 		@IQuantumIDENavigationHistoryService private readonly _navigationHistory: IQuantumIDENavigationHistoryService,
 		@ITextFileService private readonly _textFileService: ITextFileService,
+		@IQuantumIDERecentlyViewedFilesService private readonly _recentlyViewed: IQuantumIDERecentlyViewedFilesService,
+		@ILogService private readonly _logService: ILogService,
+		@IMcpService private readonly _mcpService: IMcpService,
+		@IWorkspaceTrustManagementService private readonly _workspaceTrustManagementService: IWorkspaceTrustManagementService,
 	) {
 		super();
 		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.ChatSyncRealtime) !== false) {
-			this._register(this._codeEditorService.onCodeEditorAdd(() => this._syncScheduler.schedule()));
+			const markStale = () => this._contextInspector.markContextStale();
+			this._register(this._codeEditorService.onCodeEditorAdd(() => { markStale(); this._syncScheduler.schedule(); }));
 			this._register(this._editorService.onDidActiveEditorChange(() => {
+				markStale();
 				this._syncScheduler.schedule();
 				void this._lspSymbolIndexService.refreshActiveEditorSymbols();
 			}));
-			this._register(this._editorService.onDidCloseEditor(() => this._syncScheduler.schedule()));
-			this._register(this._terminalService.onDidChangeActiveInstance(() => this._syncScheduler.schedule()));
+			this._register(this._editorService.onDidCloseEditor(() => { markStale(); this._syncScheduler.schedule(); }));
+			this._register(this._terminalService.onDidChangeActiveInstance(() => { markStale(); this._syncScheduler.schedule(); }));
 			this._register(this._terminalService.onAnyInstanceData(e => {
 				const key = e.instance.instanceId.toString();
 				const prior = this._terminalOutputCache.get(key) ?? '';
 				this._terminalOutputCache.set(key, (prior + e.data).slice(-MAX_TERMINAL_OUTPUT_CHARS));
 				this._syncScheduler.schedule();
 			}));
-			this._register(this._markerService.onMarkerChanged(() => this._syncScheduler.schedule()));
-			this._register(this._lspSymbolIndexService.onDidChangeSymbols(() => this._syncScheduler.schedule()));
+			this._register(this._markerService.onMarkerChanged(() => { markStale(); this._syncScheduler.schedule(); }));
+			this._register(this._lspSymbolIndexService.onDidChangeSymbols(() => { markStale(); this._syncScheduler.schedule(); }));
 			this._register(this._codeEditorService.onCodeEditorAdd(editor => {
 				const model = editor.getModel();
 				if (!model) {
@@ -110,32 +128,68 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 
 	async buildChatContext(options: IQuantumIDEChatContextBuildOptions = {}): Promise<string> {
 		markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.ChatStartup);
+		markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.ChatContextBuild);
+		const startupDeadline = discoveryBudgetDeadlineMs(QuantumIDEPerformanceBudgetMs.chatStartup);
+		const buildDeadline = discoveryBudgetDeadlineMs(QuantumIDEPerformanceBudgetMs.chatContextBuild);
+		const shouldStopDiscovery = (): boolean => isDiscoveryBudgetExceeded(buildDeadline) || isDiscoveryBudgetExceeded(startupDeadline);
+		const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget) ?? 12000;
+		const ranked: IQuantumIDEContextSection[] = [];
+		let degraded = false;
+
 		try {
-			return await runWithBudget('chatContextBuild', QuantumIDEPerformanceBudgetMs.chatStartup, async () => {
-			try {
-			markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.ChatContextBuild);
-			const tokenBudget = this._configurationService.getValue<number>(QuantumIDEAISettingId.ChatTokenBudget) ?? 12000;
-			const ranked: IQuantumIDEContextSection[] = [];
-			ranked.push({ id: 'workspace', title: '', body: await this._quantumIDEWorkspaceContextService.buildWorkspaceContext(options), priority: 100 });
-			const editorState = this._editorStateService.formatEditorStateForContext();
-			if (editorState) {
-				ranked.push({ id: 'editor-state', title: 'Active editor state', body: editorState, priority: 96 });
+			if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+				ranked.push({
+					id: 'workspace-trust-warning',
+					title: 'Workspace trust',
+					body: formatQuantumIDEWorkspaceTrustWarningForContext(),
+					priority: 102,
+				});
 			}
-			const selection = this._buildSelectionContext();
-			if (selection) {
-				ranked.push({ id: 'selection', title: 'Active selection', body: selection, priority: 95 });
+			const byRoot = await runDiscoveryWithinBudget('workspace-context', buildDeadline, () =>
+				this._quantumIDEWorkspaceContextService.buildWorkspaceContextByRoot({
+					maxChars: options.maxChars,
+					includeActiveEditor: options.includeActiveEditor,
+					includeDiagnostics: options.includeDiagnostics,
+					includeSCM: options.includeSCM,
+					splitRootsForRanking: true,
+				}));
+			if (byRoot?.primary.trim()) {
+				ranked.push({ id: 'workspace', title: '', body: byRoot.primary, priority: 100 });
 			}
-			const branch = await this._buildGitBranchContext();
-			if (branch && options.includeBranch !== false) {
-				ranked.push({ id: 'branch', title: 'Git branch', body: branch, priority: 70 });
+			if (byRoot?.secondary?.trim()) {
+				ranked.push({ id: 'workspace-other-roots', title: 'Other workspace roots', body: byRoot.secondary, priority: 42 });
 			}
-			if (options.includeOpenTabs !== false) {
+			if (!byRoot) {
+				degraded = true;
+				const fallback = this._buildCachedWorkspaceFallback();
+				if (fallback) {
+					ranked.push({ id: 'workspace', title: '', body: fallback, priority: 100 });
+				}
+			}
+			await this._pushSection(ranked, 'editor-state', 'Active editor state', 96, async () => this._editorStateService.formatEditorStateForContext() ?? undefined, shouldStopDiscovery);
+			await this._pushSection(ranked, 'selection', 'Active selection', 95, async () => this._buildSelectionContext(), shouldStopDiscovery);
+			if (options.includeBranch !== false) {
+				await this._pushSection(ranked, 'branch', 'Git branch', 70, () => this._buildGitBranchContext(), shouldStopDiscovery);
+			}
+			if (options.includeOpenTabs !== false && !shouldStopDiscovery()) {
 				const tabs = this._buildOpenTabsContext();
 				if (tabs) {
 					ranked.push({ id: 'tabs', title: 'Open tabs', body: tabs, priority: 65 });
 				}
 			}
-			if (options.includeTerminal !== false) {
+			if (!shouldStopDiscovery()) {
+				const recent = this._buildRecentlyViewedContext();
+				if (recent) {
+					ranked.push({ id: 'recent-files', title: 'Recently viewed files', body: recent, priority: 64 });
+				}
+			}
+			if (!shouldStopDiscovery()) {
+				const mcp = this._buildMcpResourcesContext();
+				if (mcp) {
+					ranked.push({ id: 'mcp-resources', title: 'MCP servers (external)', body: mcp, priority: 40 });
+				}
+			}
+			if (options.includeTerminal !== false && !shouldStopDiscovery()) {
 				const terminal = this._buildTerminalContext();
 				if (terminal) {
 					ranked.push({ id: 'terminal', title: 'Terminal sessions', body: terminal, priority: 75 });
@@ -146,120 +200,124 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 					ranked.push({ id: 'terminal-output', title: 'Terminal output (parsed)', body: `${rawOutput}\n\n${insights}`, priority: 80 });
 				}
 			}
-			const lspSymbols = await this._lspSymbolIndexService.getSymbolGraphPreview(30);
-			if (lspSymbols.length > 0) {
-				ranked.push({
-					id: 'lsp-active',
-					title: 'LSP symbol graph (active editor)',
-					body: lspSymbols.map(s => `- ${s.name} (${s.kind}) line ${s.line}`).join('\n'),
-					priority: 60,
-				});
-			}
-			const wsSymbols = this._workspaceSymbolIndexService.getSymbols().slice(0, 35);
-			if (wsSymbols.length > 0) {
-				ranked.push({
-					id: 'symbols-workspace',
-					title: 'Workspace symbol index',
-					body: wsSymbols.map(s => `- ${s.path}:${s.line} ${s.kind} ${s.name}`).join('\n'),
-					priority: 55,
-				});
-			}
-			const graph = this._semanticIndexService.getDependencyGraph();
-			if (graph && graph.nodes.length > 0) {
-				ranked.push({
-					id: 'deps',
-					title: `Dependency graph (${graph.nodes.length} nodes)`,
-					body: formatDependencyGraphSummary(graph, 25),
-					priority: 50,
-				});
-			}
-			const liveDiagnostics = this._buildLiveDiagnosticsContext();
-			if (liveDiagnostics) {
-				ranked.push({
-					id: 'diagnostics-live',
-					title: 'Live diagnostics (errors & warnings)',
-					body: liveDiagnostics,
-					priority: 88,
-				});
-			}
-			const diagnosticsIndex = this._semanticIndexService.getDiagnosticsIndex();
-			if (diagnosticsIndex && diagnosticsIndex.entries.length > 0) {
-				ranked.push({
-					id: 'diagnostics-index',
-					title: 'Indexed diagnostics',
-					body: formatDiagnosticsIndexSummary(diagnosticsIndex, 15),
-					priority: 85,
-				});
-			}
-			const projectContext = await this._buildProjectManifestContext();
-			if (projectContext) {
-				ranked.push({
-					id: 'project-manifests',
-					title: 'Project manifests',
-					body: projectContext,
-					priority: 92,
-				});
-			}
-			if (options.userQuery) {
-				const expanded = await this._contextExpansionService.buildAutomaticExpansionSection(options.userQuery);
-				if (expanded) {
+			if (!shouldStopDiscovery()) {
+				const lspSymbols = await this._lspSymbolIndexService.getSymbolGraphPreview(30);
+				if (lspSymbols.length > 0) {
 					ranked.push({
-						id: 'context-expansion',
-						title: 'Auto-expanded related context',
-						body: expanded,
-						priority: 91,
+						id: 'lsp-active',
+						title: 'LSP symbol graph (active editor)',
+						body: lspSymbols.map(s => `- ${s.name} (${s.kind}) line ${s.line}`).join('\n'),
+						priority: 60,
 					});
 				}
 			}
-			const commentsIndex = this._semanticIndexService.getCommentsIndex();
-			if (commentsIndex && commentsIndex.entries.length > 0) {
-				const sample = commentsIndex.entries.slice(0, 12).map(c => `- ${c.path}:${c.line} ${c.text.slice(0, 80)}`).join('\n');
-				ranked.push({
-					id: 'comments-index',
-					title: `Indexed comments (${commentsIndex.entries.length})`,
-					body: sample,
-					priority: 45,
-				});
+			if (!shouldStopDiscovery()) {
+				const wsSymbols = this._workspaceSymbolIndexService.getSymbols().slice(0, 35);
+				if (wsSymbols.length > 0) {
+					ranked.push({
+						id: 'symbols-workspace',
+						title: 'Workspace symbol index',
+						body: wsSymbols.map(s => `- ${s.path}:${s.line} ${s.kind} ${s.name}`).join('\n'),
+						priority: 55,
+					});
+				}
 			}
-			if (options.includeNavigationHistory !== false) {
+			const userQuery = options.userQuery;
+			if (!shouldStopDiscovery()) {
+				for (const section of buildSemanticIndexFeedContextSections({
+					semantic: this._semanticIndexService.getSemanticIndex(),
+					ast: this._semanticIndexService.getAstIndex(),
+					dependencyGraph: this._semanticIndexService.getDependencyGraph(),
+					diagnostics: this._semanticIndexService.getDiagnosticsIndex(),
+					comments: this._semanticIndexService.getCommentsIndex(),
+					userQuery,
+				})) {
+					ranked.push(section);
+				}
+			}
+			if (!shouldStopDiscovery()) {
+				const liveDiagnostics = this._buildLiveDiagnosticsContext();
+				if (liveDiagnostics) {
+					ranked.push({
+						id: 'diagnostics-live',
+						title: 'Live diagnostics (errors & warnings)',
+						body: liveDiagnostics,
+						priority: 88,
+					});
+				}
+			}
+			await this._pushSection(ranked, 'project-manifests', 'Project manifests', 92, () => this._buildProjectManifestContext(), shouldStopDiscovery);
+			if (userQuery) {
+				await this._pushSection(ranked, 'context-expansion', 'Auto-expanded related context', 91, () => this._contextExpansionService.buildAutomaticExpansionSection(userQuery), shouldStopDiscovery);
+			}
+			if (options.includeNavigationHistory !== false && !shouldStopDiscovery()) {
 				const navigation = this._buildNavigationHistoryContext();
 				if (navigation) {
 					ranked.push({ id: 'navigation', title: 'Editor navigation', body: navigation, priority: 40 });
 				}
 			}
-			const fileHistory = await this._buildFileHistoryContext();
-			if (fileHistory) {
-				ranked.push({ id: 'file-history', title: 'File history', body: fileHistory, priority: 35 });
-			}
-			const { included, omitted } = rankAndTrimContextSections(ranked, tokenBudget);
-			const omittedIds = new Set(omitted);
-			const builtAt = Date.now();
-			this._contextInspector.recordBuild(
-				ranked.map(s => ({
-					id: s.id,
-					title: s.title || s.id,
-					charCount: s.body.length,
-					omitted: omittedIds.has(s.id),
-					tokenEstimate: Math.ceil(s.body.length / 4),
-					ageMs: 0,
-					stale: false,
-				})),
-			);
-			void builtAt;
-			const elapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.ChatContextBuild) ?? 0;
-			assertWithinBudget('chatContextBuild', elapsed, QuantumIDEPerformanceBudgetMs.chatStartup);
-			const body = formatRankedContext(included, omitted);
-			this._contextHealth.recordSuccess(included.length, omitted.length, this._hasUnsavedEditorBuffers());
-			return body;
-			} catch (err) {
-				this._contextHealth.recordFailure(String(err));
-				throw err;
-			}
-		});
-		} finally {
-			const startupElapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.ChatStartup) ?? 0;
-			assertWithinBudget('chatStartup', startupElapsed, QuantumIDEPerformanceBudgetMs.chatStartup);
+			await this._pushSection(ranked, 'file-history', 'File history', 35, () => this._buildFileHistoryContext(), shouldStopDiscovery);
+		} catch (err) {
+			degraded = true;
+			this._logService.warn(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'chat-context',
+				operation: 'buildChatContext',
+				error: String(err),
+			}));
 		}
+
+		if (shouldStopDiscovery()) {
+			degraded = true;
+		}
+
+		const body = this._finalizeChatContextBody(ranked, tokenBudget, degraded);
+		const contextElapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.ChatContextBuild) ?? 0;
+		const startupElapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.ChatStartup) ?? 0;
+		assertWithinBudget('chatContextBuild', contextElapsed, QuantumIDEPerformanceBudgetMs.chatContextBuild);
+		assertWithinBudget('chatStartup', startupElapsed, QuantumIDEPerformanceBudgetMs.chatStartup);
+		return body;
+	}
+
+	private _finalizeChatContextBody(ranked: IQuantumIDEContextSection[], tokenBudget: number, degraded: boolean): string {
+		let partial = degraded;
+		if (ranked.length === 0) {
+			partial = true;
+			const fallback = this._buildCachedWorkspaceFallback();
+			if (fallback) {
+				ranked.push({ id: 'workspace', title: '', body: fallback, priority: 100 });
+			}
+		}
+		const { included, omitted } = rankAndTrimContextSections(ranked, tokenBudget);
+		const omittedIds = new Set(omitted);
+		this._contextInspector.recordBuild(
+			ranked.map(s => ({
+				id: s.id,
+				title: s.title || s.id,
+				charCount: s.body.length,
+				omitted: omittedIds.has(s.id),
+				tokenEstimate: Math.ceil(s.body.length / 4),
+				ageMs: 0,
+				stale: partial,
+			})),
+		);
+		let body = formatRankedContext(included, omitted);
+		body = appendPartialContextFooter(body, partial);
+		if (partial) {
+			this._contextHealth.recordFailure('partial context (NFR-CC-01 degradation)');
+		} else {
+			this._contextHealth.recordSuccess(included.length, omitted.length, this._hasUnsavedEditorBuffers());
+		}
+		return body;
+	}
+
+	private _buildCachedWorkspaceFallback(): string | undefined {
+		const graph = this._quantumIDEWorkspaceContextService.getWorkspaceGraph();
+		if (!graph) {
+			return 'Workspace graph not ready; discovery was skipped due to the configured time budget.';
+		}
+		const roots = graph.folders.map(f => f.name).join(', ') || '(none)';
+		const truncated = graph.status.truncated ? ` Truncated: ${graph.status.reason ?? 'cap reached'}.` : '';
+		return `Cached workspace snapshot: roots [${roots}], ${graph.files.length} indexed paths.${truncated} Use @file or agent search tools for paths not listed.`;
 	}
 
 	private _hasUnsavedEditorBuffers(): boolean {
@@ -269,6 +327,62 @@ export class QuantumIDEChatContextOrchestrator extends Disposable implements IQu
 			}
 		}
 		return false;
+	}
+
+	private async _pushSection(
+		ranked: IQuantumIDEContextSection[],
+		id: string,
+		title: string,
+		priority: number,
+		factory: () => Promise<string | undefined> | string | undefined,
+		shouldStop?: () => boolean,
+	): Promise<void> {
+		if (shouldStop?.()) {
+			return;
+		}
+		try {
+			const body = await factory();
+			if (body?.trim()) {
+				ranked.push({ id, title, body, priority });
+			}
+		} catch (err) {
+			this._logService.warn(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'chat-context',
+				operation: `section-${id}`,
+				error: String(err),
+			}));
+		}
+	}
+
+	private _buildRecentlyViewedContext(): string | undefined {
+		const recent = this._recentlyViewed.getRecent(12);
+		if (recent.length === 0) {
+			return undefined;
+		}
+		return recent.map(e => `- ${e.workspaceRelativePath ?? e.uri}`).join('\n');
+	}
+
+	/** M-34: declare MCP URI scheme in context inspector / prompt (tool-based discovery). */
+	private _buildMcpResourcesContext(): string | undefined {
+		const servers = this._mcpService.servers.get();
+		if (!servers.length) {
+			return undefined;
+		}
+		const lines: string[] = [
+			'MCP resources use URI schemes such as mcp:// (not workspace file paths).',
+			'Trust workspace before autostart; tools attach external context only when servers are enabled.',
+		];
+		for (const server of servers.slice(0, 16)) {
+			const defs = server.readDefinitions().get();
+			const label = defs?.server?.label ?? defs?.collection?.label ?? String(server.definition.id);
+			const state = server.connectionState.get();
+			const stateLabel = state?.state ?? 'stopped';
+			lines.push(`- mcp://${encodeURIComponent(String(label))} (state=${stateLabel})`);
+		}
+		if (servers.length > 16) {
+			lines.push(`- …${servers.length - 16} more MCP servers omitted`);
+		}
+		return lines.join('\n');
 	}
 
 	private async _buildGitBranchContext(): Promise<string | undefined> {

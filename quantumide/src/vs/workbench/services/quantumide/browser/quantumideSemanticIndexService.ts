@@ -2,6 +2,7 @@
  *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
@@ -9,7 +10,6 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
-import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { QuantumIDEAISettingId } from '../../../../platform/quantumide/common/quantumideAISettings.js';
@@ -36,13 +36,15 @@ import {
 } from '../../../../platform/quantumide/common/quantumideIndexShards.js';
 import { collectIndexCandidatesChunked } from '../../../../platform/quantumide/common/quantumideChunkedIndexScanner.js';
 import { resolveQuantumIDEIndexScaleLimits } from '../../../../platform/quantumide/common/quantumideIndexScale.js';
+import { formatQuantumIDEIndexingSyncLog } from '../../../../platform/quantumide/common/quantumideIndexingSyncLog.js';
 import { loadIncrementalVectorSearch, persistIncrementalVectorStore } from '../../../../platform/quantumide/common/quantumideIncrementalVectorStore.js';
 import { fetchOpenAIEmbeddings } from '../../../../platform/quantumide/common/quantumideOpenAIEmbeddings.js';
 import { buildDependencyGraph, type IQuantumIDEDependencyGraph } from '../../../../platform/quantumide/common/quantumideDependencyGraph.js';
-import { parseGitignorePatterns, shouldQuantumIDEIgnorePath } from '../../../../platform/quantumide/common/quantumideGitignore.js';
+import { isQuantumIDEPathIgnored } from '../../../../platform/quantumide/common/quantumideWorkspaceIgnore.js';
 import {
 	buildAstIndex,
 	buildSemanticIndex,
+	countTreeSitterAstSymbols,
 	QUANTUMIDE_AST_INDEX_FILE,
 	QUANTUMIDE_DEPENDENCY_GRAPH_FILE,
 	QUANTUMIDE_SEMANTIC_INDEX_FILE,
@@ -71,17 +73,18 @@ import { MarkerSeverity } from '../../../../platform/markers/common/markers.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
 import { ISecretStorageService } from '../../../../platform/secrets/common/secrets.js';
 import { QuantumIDEOpenAIApiKeySecretStorageKey } from '../../../../platform/quantumide/common/quantumideAISettings.js';
+import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IQuantumIDEWorkspaceContextService } from '../common/quantumideWorkspaceContext.js';
 import { IQuantumIDESemanticIndexService } from '../common/quantumideSemanticIndex.js';
 import { IQuantumIDEWorkspaceSymbolIndexService } from '../common/quantumideWorkspaceSymbolIndex.js';
+import { IQuantumIDEWorkspaceIgnoreService } from '../common/quantumideWorkspaceIgnoreService.js';
+import { IQuantumIDEIndexerWorkerScheduler } from './quantumideIndexerWorkerScheduler.js';
 
 import { QUANTUMIDE_VECTOR_STORE_DIR } from '../../../../platform/quantumide/common/quantumideIncrementalVectorStore.js';
 
 export const QUANTUMIDE_GIT_INDEX_FILE = '.quantumide/git-index.json';
 const INDEXABLE_EXT = /\.(ts|tsx|js|jsx|py|go|rs|java|cs|md|json|yaml|yml|toml)$/i;
-const DEFAULT_EXCLUDED = new Set(['node_modules', 'out', 'dist', '.git', 'build', 'coverage']);
-
 export class QuantumIDESemanticIndexService extends Disposable implements IQuantumIDESemanticIndexService {
 	declare readonly _serviceBrand: undefined;
 
@@ -94,8 +97,12 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 	private _dependencyGraph: IQuantumIDEDependencyGraph | undefined;
 	private _commentsIndex: IQuantumIDECommentsIndex | undefined;
 	private _diagnosticsIndex: IQuantumIDEDiagnosticsIndex | undefined;
-	private _gitignorePatterns: string[] = [];
-	private readonly _incrementalRefresh = this._register(new RunOnceScheduler(() => void this.refreshIndexes('incremental file change'), 2000));
+	private readonly _persistIncrementalScheduler = this._register(new RunOnceScheduler(() => {
+		const folder = this._workspaceContextService.getWorkspace().folders[0];
+		if (folder) {
+			void this._persistIndexes(folder.uri);
+		}
+	}, 2000));
 
 	constructor(
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
@@ -106,6 +113,9 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 		@IQuantumIDEWorkspaceSymbolIndexService private readonly _workspaceSymbolIndexService: IQuantumIDEWorkspaceSymbolIndexService,
 		@IMarkerService private readonly _markerService: IMarkerService,
 		@ISecretStorageService private readonly _secretStorageService: ISecretStorageService,
+		@IQuantumIDEIndexerWorkerScheduler private readonly _indexerWorker: IQuantumIDEIndexerWorkerScheduler,
+		@IQuantumIDEWorkspaceIgnoreService private readonly _ignoreService: IQuantumIDEWorkspaceIgnoreService,
+		@IWorkspaceTrustManagementService private readonly _workspaceTrustManagementService: IWorkspaceTrustManagementService,
 	) {
 		super();
 		void this._loadStoredIndexes();
@@ -119,24 +129,31 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 				return;
 			}
 			for (const resource of e.rawUpdated) {
-				void this._incrementalUpdateFile(resource);
+				this._indexerWorker.scheduleIncrementalFile(resource);
 			}
 			for (const resource of e.rawAdded) {
-				void this._incrementalUpdateFile(resource);
-			}
-			if (e.rawUpdated.length > 0 || e.rawAdded.length > 0) {
-				this._incrementalRefresh.schedule();
+				this._indexerWorker.scheduleIncrementalFile(resource);
 			}
 		}));
 	}
 
+	async incrementalUpdateFile(resource: URI): Promise<void> {
+		await runWithBudget('incrementalIndexing', QuantumIDEPerformanceBudgetMs.incrementalIndexing, async () => {
+			await this._incrementalUpdateFile(resource);
+		});
+	}
+
 	private async _incrementalUpdateFile(resource: URI): Promise<void> {
+		if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+			return;
+		}
 		const folder = this._workspaceContextService.getWorkspaceFolder(resource);
 		if (!folder) {
 			return;
 		}
 		const relPath = resource.fsPath.slice(folder.uri.fsPath.length + 1);
-		if (!INDEXABLE_EXT.test(resource.path) || shouldQuantumIDEIgnorePath(relPath, this._gitignorePatterns, this._getExcludedNames())) {
+		const policy = await this._ignoreService.getPolicy();
+		if (!INDEXABLE_EXT.test(resource.path) || isQuantumIDEPathIgnored(relPath, policy, 'index', resource.path.split('/').pop())) {
 			return;
 		}
 		try {
@@ -158,9 +175,27 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 			const symbols = parser.extractSymbols(relativePath, text, 200);
 			if (this._astIndex && symbols.length > 0) {
 				const filtered = this._astIndex.symbols.filter(s => s.path !== relativePath);
-				this._astIndex = { ...this._astIndex, symbols: [...filtered, ...symbols] };
+				const merged = [...filtered, ...symbols];
+				const treeSitterSymbolCount = countTreeSitterAstSymbols(merged);
+				this._astIndex = {
+					...this._astIndex,
+					symbols: merged,
+					treeSitterSymbolCount: treeSitterSymbolCount > 0 ? treeSitterSymbolCount : undefined,
+				};
 				void this._workspaceSymbolIndexService.refreshWorkspaceSymbols(this._astIndex.symbols);
 			}
+			const commentSlice = buildCommentsIndex([{ path: relativePath, text }]);
+			if (this._commentsIndex) {
+				const kept = this._commentsIndex.entries.filter(e => e.path !== relativePath);
+				this._commentsIndex = {
+					...this._commentsIndex,
+					generatedAt: new Date().toISOString(),
+					entries: [...kept, ...commentSlice.entries],
+				};
+			}
+			this._onDidChangeIndex.fire();
+			this._persistIncrementalScheduler.schedule();
+			this._logService.trace(`[QuantumIDE] Incremental index updated: ${relativePath}`);
 		} catch {
 			// skip
 		}
@@ -191,6 +226,9 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 	}
 
 	async refreshIndexes(reason = 'manual'): Promise<void> {
+		if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+			return;
+		}
 		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) !== true) {
 			return;
 		}
@@ -204,19 +242,20 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 		}
 		await runWithBudget('incrementalIndexing', QuantumIDEPerformanceBudgetMs.incrementalIndexing, async () => {
 			markQuantumIDEPerformanceStart(QuantumIDEPerformanceMark.WorkspaceIndexRefresh);
+			this._ignoreService.invalidate();
+			const indexIgnorePolicy = await this._ignoreService.getPolicy();
 			const scale = this._getScaleLimits();
 			const documents: { path: string; text: string }[] = [];
 			const manifests: { path: string; content: string }[] = [];
 			let scanned = 0;
 			const perFolderBudget = Math.max(50, Math.floor(scale.maxFiles / Math.max(1, folders.length)));
 			for (const folder of folders) {
-				await this._loadGitignorePatterns(folder.uri);
 				const scannedFolder = await collectIndexCandidatesChunked({
 					root: folder.uri,
 					maxFiles: perFolderBudget,
 					maxDepth: scale.maxScanDepth,
 					yieldEveryMs: scale.indexYieldMs,
-					shouldSkip: relativePath => shouldQuantumIDEIgnorePath(relativePath, this._gitignorePatterns, this._getExcludedNames()),
+					shouldSkip: relativePath => isQuantumIDEPathIgnored(relativePath, indexIgnorePolicy, 'index'),
 					isIndexable: (relativePath, resource) => INDEXABLE_EXT.test(resource.path) || relativePath.endsWith('package.json'),
 					listDirectory: async resource => {
 						const stat = await this._fileService.resolve(resource);
@@ -256,7 +295,16 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 				const vectorStore = this._configurationService.getValue<string>(QuantumIDEAISettingId.IndexingVectorStore) ?? 'json';
 				if (vectorStore === 'incremental' || vectorStore === 'lancedb') {
 					const embedFn = await this._createEmbedFn(documents, embeddingProvider);
-					await persistIncrementalVectorStore(this._fileService, folders[0].uri, documents, embeddingProvider, embedFn);
+					const manifest = await persistIncrementalVectorStore(this._fileService, folders[0].uri, documents, embeddingProvider, embedFn);
+					this._logService.info(formatQuantumIDEIndexingSyncLog({
+						phase: 'completed',
+						reason: `${reason}-vector-pipeline`,
+						indexedFiles: documents.length,
+						vectorChunks: manifest.chunkCount,
+						embeddingProvider,
+						ready: true,
+						busy: false,
+					}));
 				}
 			}
 			this._dependencyGraph = buildDependencyGraph(
@@ -267,7 +315,8 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 			await this._persistIndexes(folders[0].uri);
 			setQuantumIDEIncrementalVectorStoreAdapter(this._fileService, folders[0].uri);
 			this._onDidChangeIndex.fire();
-			this._logService.info(`[QuantumIDE] Indexes refreshed (${reason}, ${scale.profile}): ${scanned} scanned, ${documents.length} docs, ${manifests.length} manifests`);
+			const tsAst = this._astIndex?.treeSitterSymbolCount ?? 0;
+			this._logService.info(`[QuantumIDE] Indexes refreshed (${reason}, ${scale.profile}): ${scanned} scanned, ${documents.length} docs, ${manifests.length} manifests, ${tsAst} Tree-sitter AST symbols`);
 			const elapsed = markQuantumIDEPerformanceEnd(QuantumIDEPerformanceMark.WorkspaceIndexRefresh) ?? 0;
 			assertWithinBudget('incrementalIndexing', elapsed, QuantumIDEPerformanceBudgetMs.incrementalIndexing);
 		});
@@ -338,6 +387,7 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 	}
 
 	async inspectCache(): Promise<string> {
+		const policy = await this._ignoreService.getPolicy();
 		const semantic = this._semanticIndex;
 		const ast = this._astIndex;
 		const vector = this._vectorIndex;
@@ -350,7 +400,7 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 			this._commentsIndex ? `Comments: ${this._commentsIndex.entries.length} entries (${this._commentsIndex.generatedAt})` : 'Comments: not built',
 			this._diagnosticsIndex ? `Diagnostics: ${this._diagnosticsIndex.entries.length} entries (${this._diagnosticsIndex.generatedAt})` : 'Diagnostics: not built',
 			graph ? `Dependency graph: ${graph.nodes.length} nodes (${graph.generatedAt})` : 'Dependency graph: not built',
-			this._gitignorePatterns.length > 0 ? `Gitignore: ${this._gitignorePatterns.length} patterns` : 'Gitignore: none loaded',
+			`Ignore policy: ${policy.aiPatterns.length} AI + ${policy.indexingOnlyPatterns.length} index-only pattern(s)`,
 			`Scale profile: ${this._getScaleLimits().profile} (max ${this._getScaleLimits().maxFiles} files)`,
 			`Vector store: ${this._configurationService.getValue<string>(QuantumIDEAISettingId.IndexingVectorStore) ?? 'json'}`,
 		].join('\n');
@@ -390,21 +440,6 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 		}
 		this._onDidChangeIndex.fire();
 		this._logService.info('[QuantumIDE] Index cache cleared');
-	}
-
-	private async _loadGitignorePatterns(root: URI): Promise<void> {
-		try {
-			const raw = (await this._fileService.readFile(joinPath(root, '.gitignore'))).value.toString();
-			this._gitignorePatterns = parseGitignorePatterns(raw);
-		} catch {
-			this._gitignorePatterns = [];
-		}
-		const configured = this._configurationService.getValue<readonly string[]>(QuantumIDEAISettingId.IndexingExcludePatterns) ?? [];
-		for (const pattern of configured) {
-			if (typeof pattern === 'string' && pattern.trim()) {
-				this._gitignorePatterns.push(pattern.trim());
-			}
-		}
 	}
 
 	private _workspaceCacheKey(): string {
@@ -521,16 +556,6 @@ export class QuantumIDESemanticIndexService extends Disposable implements IQuant
 			joinPath(root, QUANTUMIDE_GIT_INDEX_FILE),
 			VSBuffer.fromString(this._encodeCachePayload(JSON.stringify(payload, undefined, 2))),
 		);
-	}
-
-	private _getExcludedNames(): ReadonlySet<string> {
-		const names = new Set(DEFAULT_EXCLUDED);
-		for (const pattern of this._gitignorePatterns) {
-			if (!pattern.includes('*') && !pattern.includes('/')) {
-				names.add(pattern.replace(/\/$/, ''));
-			}
-		}
-		return names;
 	}
 
 	private async _persistSemanticShards(root: URI, index: import('../../../../platform/quantumide/common/quantumideSemanticIndex.js').IQuantumIDESemanticIndex): Promise<void> {

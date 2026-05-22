@@ -528,7 +528,8 @@ export class ChatAgentService extends Disposable implements IChatAgentService {
 	}
 
 	async invokeAgent(id: string, request: IChatAgentRequest, progress: (parts: IChatProgress[]) => void, history: IChatAgentHistoryEntry[], token: CancellationToken): Promise<IChatAgentResult> {
-		markChat(request.sessionResource, ChatPerfMark.AgentWillInvoke);
+		markChat(request.sessionResource, ChatPerfMark.ApiRequestSent, { requestId: request.requestId });
+		markChat(request.sessionResource, ChatPerfMark.AgentWillInvoke, { requestId: request.requestId });
 		const data = this._agents.get(id);
 		if (!data?.impl) {
 			throw new Error(`No activated agent with id "${id}"`);

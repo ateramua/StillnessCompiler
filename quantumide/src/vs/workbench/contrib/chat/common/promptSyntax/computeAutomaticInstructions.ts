@@ -32,6 +32,10 @@ import { ChatConfiguration, ChatModeKind, GeneralPurposeAgentName } from '../con
 import { UserSelectedTools } from '../participants/chatAgents.js';
 import { hash } from '../../../../../base/common/hash.js';
 import { IAgentPlugin, IAgentPluginService } from '../plugins/agentPluginService.js';
+import { IProductService } from '../../../../../platform/product/common/productService.js';
+import { isQuantumIDEBuild } from '../../../../../platform/quantumide/common/quantumideChatPlatform.js';
+import { ICodeEditorService } from '../../../../../editor/browser/services/codeEditorService.js';
+import { collectQuantumIDEChatInstructions } from '../../../../services/quantumide/browser/collectQuantumIDEChatInstructions.js';
 
 export interface InstructionsCollectionResult {
 	readonly telemetryEvent: InstructionsCollectionEvent;
@@ -76,6 +80,8 @@ export class ComputeAutomaticInstructions {
 		@ITelemetryService private readonly _telemetryService: ITelemetryService,
 		@ILanguageModelToolsService private readonly _languageModelToolsService: ILanguageModelToolsService,
 		@IAgentPluginService private readonly _agentPluginService: IAgentPluginService,
+		@IProductService private readonly _productService: IProductService,
+		@ICodeEditorService private readonly _codeEditorService: ICodeEditorService,
 	) {
 	}
 
@@ -118,6 +124,24 @@ export class ComputeAutomaticInstructions {
 		if (customizationsIndexVariable) {
 			variables.add(customizationsIndexVariable);
 			telemetryEvent.listedInstructionsCount++;
+		}
+
+		if (isQuantumIDEBuild(this._productService)) {
+			const quantumideEntries = await collectQuantumIDEChatInstructions({
+				productService: this._productService,
+				fileService: this._fileService,
+				workspaceService: this._workspaceService,
+				codeEditorService: this._codeEditorService,
+				logService: this._logService,
+			}, variables, token);
+			telemetryEvent.agentInstructionsCount += quantumideEntries.length;
+			for (const entry of quantumideEntries) {
+				debugInfo.debugDetails.push({
+					category: 'applying',
+					name: entry.name,
+					reason: localize('quantumide.debugDetail.rules', 'QuantumIDE workspace rules (collectInstructions)'),
+				});
+			}
 		}
 
 		debugInfo.durationInMillis = performance.now() - startTime;

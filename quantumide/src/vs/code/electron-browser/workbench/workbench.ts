@@ -499,7 +499,6 @@
 	const { result, configuration } = await load<IDesktopMain, INativeWindowConfiguration>(
 		{
 			configureDeveloperSettings: function (windowConfig) {
-				const isExtensionDev = Array.isArray(windowConfig.extensionDevelopmentPath) && windowConfig.extensionDevelopmentPath.length > 0;
 				const isExtensionTest = typeof windowConfig.extensionTestsPath === 'string' || windowConfig['enable-smoke-test-driver'] === true;
 				return {
 					// disable automated devtools opening on error when running extension tests

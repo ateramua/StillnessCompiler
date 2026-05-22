@@ -11,6 +11,10 @@ export interface IQuantumIDEWorkspaceContextBuildOptions {
 	readonly includeActiveEditor?: boolean;
 	readonly includeDiagnostics?: boolean;
 	readonly includeSCM?: boolean;
+	/** MP-05: prefer file lists from this workspace folder name before other roots. */
+	readonly preferRootFolderName?: string;
+	/** When true, split workspace file lists into primary (preferred root) vs secondary sections. */
+	readonly splitRootsForRanking?: boolean;
 }
 
 export interface IQuantumIDEWorkspaceContextService {
@@ -19,6 +23,8 @@ export interface IQuantumIDEWorkspaceContextService {
 	getWorkspaceGraph(): IQuantumIDEWorkspaceGraph | undefined;
 	refreshWorkspaceGraph(reason?: string): Promise<IQuantumIDEWorkspaceGraph>;
 	buildWorkspaceContext(options?: IQuantumIDEWorkspaceContextBuildOptions): Promise<string>;
+	/** MP-05: primary = preferred root snapshot; secondary = other roots (lower priority for ranker). */
+	buildWorkspaceContextByRoot(options?: IQuantumIDEWorkspaceContextBuildOptions): Promise<{ primary: string; secondary?: string }>;
 }
 
 export const IQuantumIDEWorkspaceContextService = createDecorator<IQuantumIDEWorkspaceContextService>('quantumIDEWorkspaceContextService');

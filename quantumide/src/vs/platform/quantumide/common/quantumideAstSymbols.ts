@@ -2,11 +2,25 @@
  *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+/** Which parser produced the symbol row (M-29). */
+export type QuantumIDEAstParserSource = 'tree-sitter-wasm' | 'regex-ast';
+
+/** Optional Tree-sitter / structural metadata preserved in the AST index. */
+export interface IQuantumIDEAstSymbolMetadata {
+	readonly parser: QuantumIDEAstParserSource;
+	readonly nodeType?: string;
+	readonly parentType?: string;
+	readonly endLine?: number;
+	readonly startColumn?: number;
+	readonly endColumn?: number;
+}
+
 export interface IQuantumIDEAstSymbolEntry {
 	readonly path: string;
 	readonly line: number;
 	readonly kind: string;
 	readonly name: string;
+	readonly metadata?: IQuantumIDEAstSymbolMetadata;
 }
 
 const AST_PATTERNS: { kind: string; pattern: RegExp }[] = [
@@ -26,7 +40,13 @@ export function extractAstSymbolsFromText(path: string, text: string, maxPerFile
 		for (const { kind, pattern } of AST_PATTERNS) {
 			const match = line.match(pattern);
 			if (match?.[1]) {
-				symbols.push({ path, line: i + 1, kind, name: match[1] });
+				symbols.push({
+					path,
+					line: i + 1,
+					kind,
+					name: match[1],
+					metadata: { parser: 'regex-ast' },
+				});
 				break;
 			}
 		}

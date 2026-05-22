@@ -2,10 +2,13 @@
  *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
+import { raceTimeout } from '../../../../base/common/async.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { formatQuantumIDEWorkspaceDiscoveryLog } from '../../../../platform/quantumide/common/quantumideWorkspaceDiscoveryLog.js';
 import {
 	expandContextFromSymbols,
 	formatContextExpansion,
@@ -29,6 +32,7 @@ export class QuantumIDEContextExpansionService implements IQuantumIDEContextExpa
 		@IFileService private readonly _fileService: IFileService,
 		@IWorkspaceContextService private readonly _workspace: IWorkspaceContextService,
 		@IQuantumIDESemanticIndexService private readonly _semanticIndex: IQuantumIDESemanticIndexService,
+		@ILogService private readonly _logService: ILogService,
 	) { }
 
 	async expandForQuery(query: string, maxHits = 10): Promise<string> {
@@ -73,11 +77,20 @@ export class QuantumIDEContextExpansionService implements IQuantumIDEContextExpa
 		if (!questionLike) {
 			return undefined;
 		}
-		const body = await this.expandForQuery(trimmed, 6);
-		if (body.startsWith('No related context')) {
+		try {
+			const body = await raceTimeout(this.expandForQuery(trimmed, 6), 2000);
+			if (!body || body.startsWith('No related context')) {
+				return undefined;
+			}
+			return body.slice(0, 4000);
+		} catch {
+			this._logService.warn(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'chat-context',
+				operation: 'context-expansion',
+				error: 'timeout-2s',
+			}));
 			return undefined;
 		}
-		return body.slice(0, 4000);
 	}
 }
 

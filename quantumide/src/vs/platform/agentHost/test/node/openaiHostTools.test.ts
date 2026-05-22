@@ -10,6 +10,7 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/c
 import { FileService } from '../../../files/common/fileService.js';
 import { InMemoryFileSystemProvider } from '../../../files/common/inMemoryFilesystemProvider.js';
 import { NullLogService } from '../../../log/common/log.js';
+import { writeQuantumIDEIndexingStatus } from '../../../quantumide/common/quantumideIndexingStatusStore.js';
 import { executeOpenAIHostTool, isOpenAIHostTool } from '../../node/openai/openaiHostTools.js';
 
 suite('openaiHostTools', () => {
@@ -74,6 +75,7 @@ suite('openaiHostTools', () => {
 		const result = await executeOpenAIHostTool(fileService, root, 'search_workspace_text', { query: 'activity' });
 		assert.ok(result.includes('Found 1 match'));
 		assert.ok(result.includes('activity'));
+		assert.ok(result.includes('ripgrep') || result.includes('scanned'), 'expected ripgrep or scan-fallback engine label');
 	});
 
 	test('apply_workspace_edits respects autoApplyEdits gate', async () => {
@@ -88,6 +90,53 @@ suite('openaiHostTools', () => {
 			edits: [{ operation: 'write', path: 'out.ts', content: 'export {};\n' }],
 		}, { autoApplyEdits: true });
 		assert.ok(applied.includes('updated out.ts'));
+	});
+
+	test('apply_workspace_edits returns indexing gate without partial write when not ready', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		await writeQuantumIDEIndexingStatus(fileService, root, {
+			ready: false,
+			busy: true,
+			percent: 12,
+			indexedFiles: 3,
+			updatedAt: new Date().toISOString(),
+		});
+		const target = URI.joinPath(root, 'gate-blocked.ts');
+		const result = await executeOpenAIHostTool(fileService, root, 'apply_workspace_edits', {
+			edits: [{ operation: 'write', path: 'gate-blocked.ts', content: 'export const blocked = 1;\n' }],
+		}, { autoApplyEdits: true, waitForIndexingBeforeEdits: true });
+		assert.ok(result.includes('indexing'));
+		assert.strictEqual(await fileService.exists(target), false);
+	});
+
+	test('search_semantic_workspace falls back when indexing is disabled', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		await fileService.writeFile(URI.joinPath(root, 'findme.ts'), VSBuffer.fromString('export const discoverMe = 1;\n'));
+
+		const result = await executeOpenAIHostTool(fileService, root, 'search_semantic_workspace', {
+			query: 'discoverMe',
+			maxResults: 5,
+		}, { indexingEnabled: false });
+		assert.ok(result.includes('indexing is disabled'));
+		assert.ok(result.includes('search_workspace_text'));
+		assert.ok(result.includes('discoverMe') || result.includes('findme.ts'));
+	});
+
+	test('apply_workspace_edits applies when indexing ready', async () => {
+		const fileService = createFileService();
+		const root = URI.file('/workspace');
+		await writeQuantumIDEIndexingStatus(fileService, root, {
+			ready: true,
+			busy: false,
+			indexedFiles: 50,
+			updatedAt: new Date().toISOString(),
+		});
+		const result = await executeOpenAIHostTool(fileService, root, 'apply_workspace_edits', {
+			edits: [{ operation: 'write', path: 'ready.ts', content: 'export const ok = 1;\n' }],
+		}, { autoApplyEdits: true, waitForIndexingBeforeEdits: true });
+		assert.ok(result.includes('updated ready.ts'));
 	});
 
 	test('batch search returns sections per query', async () => {

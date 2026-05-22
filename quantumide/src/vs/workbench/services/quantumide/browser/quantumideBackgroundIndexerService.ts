@@ -10,7 +10,14 @@ import { IConfigurationService } from '../../../../platform/configuration/common
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
+import { formatQuantumIDEIndexingSyncLog } from '../../../../platform/quantumide/common/quantumideIndexingSyncLog.js';
+import {
+	QUANTUMIDE_VECTOR_INDEX_OPEN_PROJECT_DEFER_MS,
+	QUANTUMIDE_VECTOR_INDEX_PERIODIC_SYNC_MS,
+} from '../../../../platform/quantumide/common/quantumideVectorIndexWorkflow.js';
 import { QuantumIDEAISettingId } from '../../../../platform/quantumide/common/quantumideAISettings.js';
+import { writeQuantumIDEIndexingStatus } from '../../../../platform/quantumide/common/quantumideIndexingStatusStore.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IStatusbarEntryAccessor, IStatusbarService, StatusbarAlignment } from '../../../services/statusbar/browser/statusbar.js';
 import { IQuantumIDESemanticIndexService } from '../common/quantumideSemanticIndex.js';
@@ -27,6 +34,8 @@ export interface IQuantumIDEBackgroundIndexerService {
 
 export const IQuantumIDEBackgroundIndexerService = createDecorator<IQuantumIDEBackgroundIndexerService>('quantumIDEBackgroundIndexerService');
 
+const INDEX_PROGRESS_POLL_MS = 500;
+
 export class QuantumIDEBackgroundIndexerService extends Disposable implements IQuantumIDEBackgroundIndexerService {
 	declare readonly _serviceBrand: undefined;
 
@@ -35,6 +44,8 @@ export class QuantumIDEBackgroundIndexerService extends Disposable implements IQ
 
 	private readonly _statusEntry = this._register(new MutableDisposable<IStatusbarEntryAccessor>());
 	private _busy = false;
+	private _lastIndexReason = 'background';
+	private _lastLoggedPercent: number | undefined;
 	private readonly _scheduler = this._register(new RunOnceScheduler(() => void this._runIndex(), 1500));
 
 	constructor(
@@ -45,6 +56,7 @@ export class QuantumIDEBackgroundIndexerService extends Disposable implements IQ
 		@IFileService private readonly _fileService: IFileService,
 		@IStatusbarService private readonly _statusbar: IStatusbarService,
 		@ITextFileService private readonly _textFiles: ITextFileService,
+		@ILogService private readonly _logService: ILogService,
 	) {
 		super();
 		const dirtyScheduler = this._register(new RunOnceScheduler(() => this.scheduleBackgroundRefresh('unsaved buffer edit'), 800));
@@ -55,16 +67,26 @@ export class QuantumIDEBackgroundIndexerService extends Disposable implements IQ
 				this.scheduleBackgroundRefresh('workspace files changed');
 			}
 		}));
-		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.SemanticIndexingEnabled) === true) {
-			this._register(new RunOnceScheduler(() => this.scheduleBackgroundRefresh('startup'), 10_000)).schedule();
+		if (this._isSemanticIndexingEnabled()) {
+			this._register(new RunOnceScheduler(() => this.scheduleBackgroundRefresh('open-project'), QUANTUMIDE_VECTOR_INDEX_OPEN_PROJECT_DEFER_MS)).schedule();
 		}
+		const periodicSync = this._register(new RunOnceScheduler(() => {
+			this.scheduleBackgroundRefresh('periodic-sync-5m');
+			periodicSync.schedule();
+		}, QUANTUMIDE_VECTOR_INDEX_PERIODIC_SYNC_MS));
+		periodicSync.schedule();
 	}
 
 	scheduleBackgroundRefresh(reason: string): void {
-		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.SemanticIndexingEnabled) === false) {
+		if (!this._isSemanticIndexingEnabled()) {
 			return;
 		}
-		void reason;
+		this._lastIndexReason = reason;
+		this._logService.info(formatQuantumIDEIndexingSyncLog({
+			phase: 'scheduled',
+			reason,
+			...this.getProgress(),
+		}));
 		this._scheduler.schedule();
 	}
 
@@ -77,42 +99,144 @@ export class QuantumIDEBackgroundIndexerService extends Disposable implements IQ
 		const max = this._configurationService.getValue<number>(QuantumIDEAISettingId.IndexingMaxFiles)
 			?? (this._configurationService.getValue<string>(QuantumIDEAISettingId.IndexingScaleProfile) === 'enterprise' ? 50_000 : 500);
 		const percent = max > 0 ? Math.min(100, Math.round((limits.indexedFiles / max) * 100)) : undefined;
-		return { busy: this._busy, percent: this._busy ? percent : (percent === 100 ? 100 : percent), indexedFiles: limits.indexedFiles };
+		return { busy: this._busy, percent, indexedFiles: limits.indexedFiles };
+	}
+
+	private _isSemanticIndexingEnabled(): boolean {
+		return this._configurationService.getValue<boolean>(QuantumIDEAISettingId.SemanticIndexingEnabled) === true;
+	}
+
+	private _logProgressTransition(progress: { busy: boolean; percent?: number; indexedFiles: number }, reason: string): void {
+		if (progress.percent !== undefined && progress.percent !== this._lastLoggedPercent) {
+			this._lastLoggedPercent = progress.percent;
+			this._logService.info(formatQuantumIDEIndexingSyncLog({
+				phase: 'progress',
+				reason,
+				percent: progress.percent,
+				indexedFiles: progress.indexedFiles,
+				busy: progress.busy,
+			}));
+		}
+	}
+
+	private _renderStatusBar(progress: { busy: boolean; percent?: number; indexedFiles: number }): void {
+		if (!this._isSemanticIndexingEnabled()) {
+			this._statusEntry.clear();
+			return;
+		}
+		let text: string;
+		let ariaLabel: string;
+		if (progress.busy) {
+			text = progress.percent !== undefined
+				? '$(sync~spin) ' + localize('quantumide.indexingPercent', 'Indexing {0}% ({1} files)', progress.percent, progress.indexedFiles)
+				: '$(sync~spin) ' + localize('quantumide.indexing', 'Indexing…');
+			ariaLabel = localize('quantumide.indexingAria', 'QuantumIDE is indexing the workspace');
+		} else if (progress.percent !== undefined && progress.percent < 100) {
+			text = '$(database) ' + localize('quantumide.indexPartial', 'Index {0}% ({1} files)', progress.percent, progress.indexedFiles);
+			ariaLabel = localize('quantumide.indexPartialAria', 'Workspace index is {0} percent complete', progress.percent);
+		} else if (progress.percent === 100) {
+			text = '$(check) ' + localize('quantumide.indexReady', 'Index ready ({0} files)', progress.indexedFiles);
+			ariaLabel = localize('quantumide.indexReadyAria', 'Workspace index is ready');
+		} else {
+			this._statusEntry.clear();
+			return;
+		}
+		const entry = {
+			name: localize('quantumide.indexingStatus', 'QuantumIDE indexing'),
+			text,
+			ariaLabel,
+			showInAllWindows: true,
+		};
+		if (!this._statusEntry.value) {
+			this._statusEntry.value = this._statusbar.addEntry(entry, 'quantumide.backgroundIndexer', StatusbarAlignment.LEFT, 100);
+		} else {
+			this._statusEntry.value.update(entry);
+		}
+	}
+
+	private async _persistIndexingStatus(
+		progress: { busy: boolean; percent?: number; indexedFiles: number },
+		reason: string,
+	): Promise<void> {
+		const folder = this._workspace.getWorkspace().folders[0]?.uri;
+		if (!folder) {
+			return;
+		}
+		const ready = !progress.busy && (progress.percent === undefined || progress.percent >= 80);
+		await writeQuantumIDEIndexingStatus(this._fileService, folder, {
+			ready,
+			busy: progress.busy,
+			percent: progress.percent,
+			indexedFiles: progress.indexedFiles,
+			updatedAt: new Date().toISOString(),
+			reason,
+		});
 	}
 
 	private async _runIndex(): Promise<void> {
 		if (this._busy || !this._workspace.getWorkspace().folders.length) {
 			return;
 		}
+		const start = Date.now();
 		this._busy = true;
-		const progress = this.getProgress();
+		let progress = this.getProgress();
+		this._logService.info(formatQuantumIDEIndexingSyncLog({
+			phase: 'started',
+			reason: this._lastIndexReason,
+			percent: progress.percent,
+			indexedFiles: progress.indexedFiles,
+			busy: true,
+		}));
 		this._onDidChangeProgress.fire({ phase: 'indexing', busy: true, percent: progress.percent, indexedFiles: progress.indexedFiles });
-		this._statusEntry.value = this._statusbar.addEntry({
-			name: localize('quantumide.indexingStatus', 'QuantumIDE indexing'),
-			text: progress.percent !== undefined
-				? '$(sync~spin) ' + localize('quantumide.indexingPercent', 'Indexing {0}% ({1} files)', progress.percent, progress.indexedFiles)
-				: '$(sync~spin) ' + localize('quantumide.indexing', 'Indexing…'),
-			ariaLabel: localize('quantumide.indexingAria', 'QuantumIDE is indexing the workspace'),
-			showInAllWindows: true,
-		}, 'quantumide.backgroundIndexer', StatusbarAlignment.LEFT, 100);
+		await this._persistIndexingStatus(progress, this._lastIndexReason);
+		this._renderStatusBar(progress);
+		this._logProgressTransition(progress, this._lastIndexReason);
 		try {
-			this._indexerWorker.scheduleChunkedRefresh('background');
+			this._indexerWorker.scheduleChunkedRefresh(this._lastIndexReason);
 			await new Promise<void>(resolve => {
-				const check = () => {
+				const poll = () => {
+					progress = this.getProgress();
+					this._renderStatusBar(progress);
+					void this._persistIndexingStatus(progress, this._lastIndexReason);
+					this._logProgressTransition(progress, this._lastIndexReason);
+					this._onDidChangeProgress.fire({
+						phase: 'indexing',
+						busy: true,
+						percent: progress.percent,
+						indexedFiles: progress.indexedFiles,
+					});
 					if (!this._indexerWorker.isWorkerBusy()) {
 						resolve();
 						return;
 					}
-					setTimeout(check, 100);
+					setTimeout(poll, INDEX_PROGRESS_POLL_MS);
 				};
-				check();
+				poll();
 			});
-			void this._semanticIndex.getIndexStats();
 		} finally {
 			this._busy = false;
-			this._statusEntry.clear();
-			const done = this.getProgress();
-			this._onDidChangeProgress.fire({ phase: 'idle', busy: false, percent: 100, indexedFiles: done.indexedFiles });
+			progress = this.getProgress();
+			const durationMs = Date.now() - start;
+			this._logService.info(formatQuantumIDEIndexingSyncLog({
+				phase: 'completed',
+				reason: this._lastIndexReason,
+				percent: progress.percent ?? 100,
+				indexedFiles: progress.indexedFiles,
+				durationMs,
+				ready: true,
+				busy: false,
+			}));
+			await this._persistIndexingStatus(progress, this._lastIndexReason);
+			this._renderStatusBar(progress);
+			this._onDidChangeProgress.fire({ phase: 'idle', busy: false, percent: progress.percent ?? 100, indexedFiles: progress.indexedFiles });
+			this._logService.info(formatQuantumIDEIndexingSyncLog({
+				phase: 'idle',
+				reason: this._lastIndexReason,
+				percent: progress.percent ?? 100,
+				indexedFiles: progress.indexedFiles,
+				ready: true,
+				busy: false,
+			}));
 		}
 	}
 }

@@ -62,13 +62,57 @@ function scoreSubsequence(needle: string, haystackLower: string, haystackRaw: st
 /**
  * Returns the best fuzzy matches for `query` against `paths`, sorted by score descending.
  */
+const PREFIX_INDEX_THRESHOLD = 5_000;
+
+function buildBasenamePrefixIndex(paths: readonly string[]): Map<string, string[]> {
+	const index = new Map<string, string[]>();
+	for (const path of paths) {
+		const base = path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+		if (!base) {
+			continue;
+		}
+		const bucket = index.get(base) ?? [];
+		bucket.push(path);
+		index.set(base, bucket);
+	}
+	return index;
+}
+
 export function quantumideFuzzyMatchFilePaths(query: string, paths: readonly string[], maxResults = 80): IQuantumIDEFuzzyFileMatch[] {
 	const q = normalizeQuery(query);
 	if (!q.length) {
 		return paths.slice(0, maxResults).map(path => ({ path, score: 1, highlights: [] as [number, number][] }));
 	}
+	const candidates = paths.length >= PREFIX_INDEX_THRESHOLD
+		? (() => {
+			if (q.includes('/')) {
+				return paths;
+			}
+			const index = buildBasenamePrefixIndex(paths);
+			const byBase = index.get(q) ?? [];
+			const prefixHits: string[] = [];
+			const first = q.charCodeAt(0);
+			const maxCandidates = 2_000;
+			for (const [base, group] of index) {
+				if (base.length < q.length || base.charCodeAt(0) !== first) {
+					continue;
+				}
+				if (base.startsWith(q)) {
+					prefixHits.push(...group);
+					if (prefixHits.length >= maxCandidates) {
+						break;
+					}
+				}
+			}
+			const merged = [...new Set([...byBase, ...prefixHits])];
+			if (merged.length > 0) {
+				return merged.slice(0, maxCandidates);
+			}
+			return paths.slice(0, maxCandidates);
+		})()
+		: paths;
 	const out: IQuantumIDEFuzzyFileMatch[] = [];
-	for (const path of paths) {
+	for (const path of candidates) {
 		const hay = path.replace(/\\/g, '/');
 		const lower = hay.toLowerCase();
 		const res = scoreSubsequence(q, lower, hay);

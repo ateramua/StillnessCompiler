@@ -52,15 +52,27 @@ import { getQuantumIDEAgentLifecyclePrompt, getQuantumIDEChatModeSystemAddon, is
 import { evaluateQuantumIDETerminalCommand } from '../../../quantumide/common/quantumideTerminalSandbox.js';
 import { loadQuantumIDEMcpOpenAITools } from './openAiMcpTools.js';
 import { readQuantumIDEAgentContextSnapshot } from '../../../quantumide/common/quantumideAgentContextSnapshotStore.js';
+import { formatQuantumIDEWorkspaceDiscoverySessionFlags } from '../../../quantumide/common/quantumideWorkspaceDiscoveryLog.js';
 import { getQuantumIDEChatEightFeaturesPromptAddon } from '../../../quantumide/common/quantumideChatEightFeaturesPrompt.js';
 import { getQuantumIDECursorParitySixPromptAddon } from '../../../quantumide/common/quantumideCursorParitySixPrompt.js';
 import { getQuantumIDECursorChatParityProgramPromptAddon } from '../../../quantumide/common/quantumideCursorChatParityProgramPrompt.js';
 import { getQuantumIDECursorParitySystemAddon } from '../../../quantumide/common/quantumideCursorParityPrompt.js';
 import { getQuantumIDEFeatureParitySystemAddon } from '../../../quantumide/common/quantumideFeatureParityPrompt.js';
 import { getQuantumIDEChatWorkflowPromptAddon } from '../../../quantumide/common/quantumideChatWorkflowPrompt.js';
+import {
+	extractEditedPathsFromToolArgs,
+	getWorkflowOptimizationSystemAddon,
+	resolveApplyWorkspaceEditsOptions,
+	resolveWorkflowOptimizationConfig,
+	shouldSkipCompileVerificationForPaths,
+	shouldUseCompactAgentPrompt,
+	resolveEffectiveEditVelocity,
+} from '../../../quantumide/common/quantumideWorkflowOptimization.js';
+import { getQuantumIDEIndexingOffDiscoverySystemAddon } from '../../../quantumide/common/quantumideLiteSnapshotContext.js';
 import { getQuantumIDEPluginPromptAddons } from '../../../quantumide/common/quantumidePluginRegistry.js';
 import { applyAstAwarePatch } from '../../../quantumide/common/quantumideAstPatch.js';
-import { executeOpenAIHostTool, getOpenAIHostActivityTools, isOpenAIHostTool, isQuantumIDERefactorHostTool, type IOpenAIHostToolContext } from './openaiHostTools.js';
+import { detectQuantumIDEWorkspaceReadonly } from '../../../quantumide/common/quantumideWorkspaceReadonly.js';
+import { executeOpenAIHostTool, getOpenAIHostActivityTools, isOpenAIHostTool, isQuantumIDERefactorHostTool, loadWorkspaceLinks, type IOpenAIHostToolContext } from './openaiHostTools.js';
 import { isDangerousQuantumIDETerminalCommand } from '../../../quantumide/common/quantumideSecurity.js';
 import { loadQuantumIDEWorkspacePolicies } from '../../../quantumide/common/quantumideWorkspacePolicies.js';
 import { applyQuantumIDEWorkspaceEdits, formatApplyWorkspaceEditsResult, resolveQuantumIDEWorkspacePath } from '../../../quantumide/common/quantumideWorkspaceEdits.js';
@@ -309,6 +321,30 @@ const quantumIDEOpenAIConfigSchema = createSchema({
 		type: 'boolean',
 		title: 'Agent Instant Palette Commands',
 	}),
+	[QuantumIDEAISettingId.AgentVerifyOnEdit]: schemaProperty<string>({
+		type: 'string',
+		title: 'Agent Verify On Edit',
+	}),
+	[QuantumIDEAISettingId.AgentPreferDirectEditorEdits]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Agent Prefer Direct Editor Edits',
+	}),
+	[QuantumIDEAISettingId.AgentDirectEditorMaxLines]: schemaProperty<number>({
+		type: 'number',
+		title: 'Agent Direct Editor Max Lines',
+	}),
+	[QuantumIDEAISettingId.AgentFastApplyEdits]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Agent Fast Apply Edits',
+	}),
+	[QuantumIDEAISettingId.AgentEditVelocity]: schemaProperty<string>({
+		type: 'string',
+		title: 'Agent Edit Velocity',
+	}),
+	[QuantumIDEAISettingId.AgentWaitForIndexingBeforeEdits]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Agent Wait For Indexing Before Edits',
+	}),
 	[QuantumIDEAISettingId.AgentEditorContextSnapshot]: schemaProperty<boolean>({
 		type: 'boolean',
 		title: 'Agent Editor Context Snapshot',
@@ -324,6 +360,26 @@ const quantumIDEOpenAIConfigSchema = createSchema({
 	[QuantumIDEAISettingId.ChatFeatureParityEnabled]: schemaProperty<boolean>({
 		type: 'boolean',
 		title: 'Chat Feature Parity Enabled',
+	}),
+	[QuantumIDEAISettingId.IndexingEnabled]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Workspace Indexing Enabled',
+	}),
+	[QuantumIDEAISettingId.SemanticIndexingEnabled]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Semantic Indexing Enabled',
+	}),
+	[QuantumIDEAISettingId.ChatTokenBudget]: schemaProperty<number>({
+		type: 'number',
+		title: 'Chat Token Budget',
+	}),
+	[QuantumIDEAISettingId.IndexingIgnoreFile]: schemaProperty<string>({
+		type: 'string',
+		title: 'Unified Ignore File',
+	}),
+	[QuantumIDEAISettingId.ChatSyncRealtime]: schemaProperty<boolean>({
+		type: 'boolean',
+		title: 'Chat Sync Realtime',
 	}),
 });
 
@@ -446,6 +502,13 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			record.config = config.config;
 		}
 		this._sessions.set(session.toString(), record);
+		this._logService.info(formatQuantumIDEWorkspaceDiscoverySessionFlags({
+			indexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingEnabled) === true,
+			semanticIndexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.SemanticIndexingEnabled) === true,
+			tokenBudget: Number(this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatTokenBudget)) || 12_000,
+			ignoreFile: String(this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingIgnoreFile) ?? '.quantumideignore'),
+			syncRealtime: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatSyncRealtime) !== false,
+		}));
 		await this._persistSessionRecord(record);
 		const result: IAgentCreateSessionResult = { session };
 		if (config?.workingDirectory) {
@@ -920,19 +983,54 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		return configured !== false;
 	}
 
+	private _getWorkflowOptimizationConfig() {
+		return resolveWorkflowOptimizationConfig({
+			autoApplyEdits: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentAutoApplyEdits) === true,
+			instantPaletteCommands: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentInstantPaletteCommands) === true,
+			verifyOnEdit: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentVerifyOnEdit),
+			preferDirectEditorEdits: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentPreferDirectEditorEdits),
+			directEditorMaxLines: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentDirectEditorMaxLines),
+			fastApplyEdits: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentFastApplyEdits) === true,
+			editVelocity: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentEditVelocity),
+			waitForIndexingBeforeEdits: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentWaitForIndexingBeforeEdits) === true,
+			preferLspRename: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentPreferLspRename),
+			requireDeleteConfirmation: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentRequireConfirmationForFileDelete),
+		});
+	}
+
 	private async _getHostToolContext(record: IOpenAISessionRecord): Promise<IOpenAIHostToolContext> {
 		const maxScope = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentMaxEditScope);
 		const policies = record.workingDirectory
 			? await loadQuantumIDEWorkspacePolicies(this._fileService, record.workingDirectory)
 			: undefined;
+		const workspaceLinks = record.workingDirectory
+			? await loadWorkspaceLinks(this._fileService, record.workingDirectory)
+			: [];
+		const workflow = this._getWorkflowOptimizationConfig();
+		const ignoreFile = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingIgnoreFile);
+		const workspaceReadonly = record.workingDirectory
+			? await detectQuantumIDEWorkspaceReadonly(this._fileService, record.workingDirectory, workspaceLinks)
+			: false;
 		return {
 			crossRootSearch: this._getCrossRootSearchEnabled(),
+			workspaceLinks,
+			workspaceReadonly,
+			ignoreFile: typeof ignoreFile === 'string' && ignoreFile.trim() ? ignoreFile.trim() : undefined,
 			velocityProfile: this._getVelocityProfile(),
-			autoApplyEdits: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentAutoApplyEdits) === true,
-			requireDeleteConfirmation: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentRequireConfirmationForFileDelete) !== false,
+			autoApplyEdits: workflow.autoApplyEdits,
+			requireDeleteConfirmation: workflow.requireDeleteConfirmation,
 			maxEditScope: typeof maxScope === 'number' && maxScope > 0 ? maxScope : undefined,
 			workspacePolicies: policies,
 			privacyLocalIndexingOnly: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.PrivacyLocalIndexingOnly) === true,
+			fastApplyEdits: workflow.fastApplyEdits,
+			editVelocity: workflow.editVelocity,
+			waitForIndexingBeforeEdits: workflow.waitForIndexingBeforeEdits,
+			preferDirectEditorEdits: workflow.preferDirectEditorEdits,
+			directEditorMaxLines: workflow.directEditorMaxLines,
+			preferLspRename: workflow.preferLspRename,
+			verifyOnEdit: workflow.verifyOnEdit,
+			indexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingEnabled) === true,
+			semanticIndexingEnabled: this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.SemanticIndexingEnabled) === true,
 		};
 	}
 
@@ -1103,7 +1201,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 		const maxContinuations = this._getIterateUntilCompleteMaxContinuations();
 		while (continuationRounds < maxContinuations && this._shouldContinueAgentIteration(options.record, messages, assistantTranscript)) {
 			continuationRounds++;
-			const continuePrompt = 'Continue autonomously until the task is complete: finish remaining execution-graph steps, run run_workspace_check when appropriate, fix failures, then summarize.';
+			const continuePrompt = 'Continue until the task is complete: finish remaining steps, apply pending edits, then summarize. Do not run full npm compile for documentation-only work (docs/*.html, docs/*.md).';
 			messages = [...messages, { role: 'user', content: continuePrompt }];
 			options.onAnswerDelta(`\n\n${continuePrompt}\n`);
 			await runToolRounds();
@@ -1427,37 +1525,49 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			getQuantumIDEAgentLifecyclePrompt(QuantumIDEAgentLifecyclePhase.Verification),
 			getQuantumIDEAgentLifecyclePrompt(QuantumIDEAgentLifecyclePhase.Review),
 		].join('\n');
-		const autoApply = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentAutoApplyEdits) === true;
-		const editGuidance = autoApply
+		const workflowConfig = this._getWorkflowOptimizationConfig();
+		const editGuidance = workflowConfig.autoApplyEdits
 			? 'Use apply_workspace_edits for coordinated multi-file changes when auto-apply is enabled. Use propose_file_edit for single risky edits. Use run_workspace_check (compile, lint, test, verify) after substantive changes and retry on failure when retry is enabled.'
 			: 'When you need to change files or run terminal commands, use the available proposal tools. Do not claim that a file was edited or a command was run until the user approves the proposal. Use apply_workspace_edits only to describe planned multi-file edits when auto-apply is disabled.';
-		const iterationGuidance = 'Iterate until the user task is complete: decompose (planning), retrieve context, apply coordinated edits, verify with run_workspace_check, fix failures, then summarize changes for review.';
+		const iterationGuidance = workflowConfig.verifyOnEdit === 'always'
+			? 'Iterate until the user task is complete: decompose (planning), retrieve context, apply coordinated edits, verify with run_workspace_check for code changes (skip compile for docs/*.md and docs/*.html), fix failures, then summarize.'
+			: 'Iterate until the user task is complete: apply edits, summarize changes. Do not run npm compile for documentation-only tasks; use run_workspace_check only when the user asks or when editing TypeScript/JavaScript sources.';
 		const preferLspRename = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentPreferLspRename) !== false;
 		const refactorGuidance = preferLspRename
 			? 'For workspace-wide symbol renames, use the client rename tool (LSP). Use rename_symbol only for single-file text renames. Refactor host tools may auto-run compile verification when enabled.'
 			: 'Refactor tools (extract_method, normalize_imports, etc.) may auto-run compile verification after success when enabled.';
 		const graph = await this._ensureExecutionGraph(record);
 		const graphAddon = graph ? `\n\n${formatExecutionGraphForPrompt(graph)}` : '';
-		const pluginAddons = getQuantumIDEPluginPromptAddons();
-		const cursorParityAddon = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatCursorParityEnabled) !== false
+		const compactPrompt = shouldUseCompactAgentPrompt(workflowConfig);
+		const pluginAddons = compactPrompt ? '' : getQuantumIDEPluginPromptAddons();
+		const cursorParityAddon = !compactPrompt && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatCursorParityEnabled) !== false
 			? `\n\n${getQuantumIDECursorParitySystemAddon()}\n\n${getQuantumIDEChatEightFeaturesPromptAddon()}\n\n${getQuantumIDECursorParitySixPromptAddon()}\n\n${getQuantumIDECursorChatParityProgramPromptAddon()}`
 			: '';
 		let editorContextAddon = '';
-		if (record.workingDirectory && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentEditorContextSnapshot) !== false) {
+		if (!compactPrompt && record.workingDirectory && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentEditorContextSnapshot) !== false) {
 			const snap = await readQuantumIDEAgentContextSnapshot(this._fileService, record.workingDirectory);
 			if (snap?.summary) {
-				editorContextAddon = `\n\nLive editor context (from ${snap.updatedAt}):\n${snap.summary}`;
+				editorContextAddon = `\n\nLive editor context (from ${snap.updatedAt}):\n${snap.summary.slice(0, 1200)}`;
 			}
 		}
-		const featureParityAddon = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatFeatureParityEnabled) !== false
+		const featureParityAddon = !compactPrompt && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatFeatureParityEnabled) !== false
 			? `\n\n${getQuantumIDEFeatureParitySystemAddon()}`
 			: '';
-		const workflowAddon = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatFeatureParityEnabled) !== false
-			? `\n\n${getQuantumIDEChatWorkflowPromptAddon()}`
-			: '';
+		const lifecycleSection = compactPrompt
+			? 'Apply edits immediately with apply_workspace_edits; avoid extra search rounds unless necessary.'
+			: lifecycleAddon;
+		const indexingEnabled = this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.IndexingEnabled) === true;
+		const workflowAddon = `\n\n${getWorkflowOptimizationSystemAddon(workflowConfig)}`
+			+ getQuantumIDEIndexingOffDiscoverySystemAddon(indexingEnabled)
+			+ (!compactPrompt && this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.ChatFeatureParityEnabled) !== false
+				? `\n\n${getQuantumIDEChatWorkflowPromptAddon()}`
+				: '');
+		const editGuidanceFast = workflowConfig.editVelocity === 'maximum' || workflowConfig.editVelocity === 'fast'
+			? 'Use apply_workspace_edits once with the full file content for doc/HTML/MD tasks. Do not run compile, tests, or broad repo search unless the user asks.'
+			: editGuidance;
 		const messages: IOpenAIMessage[] = [{
 			role: 'system',
-			content: `${systemPrompt}${modeAddon}${velocityAddon}${customizationPrompt}${handoffSection}${graphAddon}${pluginAddons}${cursorParityAddon}${editorContextAddon}${featureParityAddon}${workflowAddon}\n\n${lifecycleAddon}\n\n${iterationGuidance}\n\n${refactorGuidance}\n\n${editGuidance} Use read-only host tools (search, read, batch search, symbols) freely.`,
+			content: `${systemPrompt}${modeAddon}${velocityAddon}${customizationPrompt}${handoffSection}${graphAddon}${pluginAddons}${cursorParityAddon}${editorContextAddon}${featureParityAddon}${workflowAddon}\n\n${lifecycleSection}\n\n${iterationGuidance}\n\n${refactorGuidance}\n\n${editGuidanceFast} Use read-only host tools only when needed.`,
 		}];
 
 		let remainingChars = MAX_OPENAI_HISTORY_CHARS;
@@ -1883,7 +1993,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 					last.text = `[retry ${attempt - 1}] ${last.text}`;
 				}
 			}
-			last = await this._maybeRunPostRefactorVerify(record, toolCall.name, last);
+			last = await this._maybeRunPostRefactorVerify(record, toolCall.name, args, last);
 			await this._syncExecutionGraphForTool(record, toolCall.name, args, 'end', last.ok);
 			return last.ok ? `${toolCall.name} result:\n${last.text}` : `${toolCall.name} failed: ${last.text}`;
 		}
@@ -1897,7 +2007,7 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			}
 		}
 		if (last.ok) {
-			last = await this._maybeRunPostRefactorVerify(record, toolCall.name, last);
+			last = await this._maybeRunPostRefactorVerify(record, toolCall.name, args, last);
 			await this._syncExecutionGraphForTool(record, toolCall.name, args, 'end', true);
 			await this._appendChatInjectForHostTool(record, toolCall.name, args, last.text);
 			this._emitToolCallComplete(session, turnId, toolCall, true, activity, last.text, record);
@@ -2152,12 +2262,31 @@ export class OpenAIAgent extends Disposable implements IAgent {
 	private async _maybeRunPostRefactorVerify(
 		record: IOpenAISessionRecord,
 		toolName: string,
+		args: Record<string, unknown>,
 		last: { ok: boolean; text: string },
 	): Promise<{ ok: boolean; text: string }> {
-		if (!last.ok || !isQuantumIDERefactorHostTool(toolName)) {
+		if (!last.ok) {
 			return last;
 		}
-		if (this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentRefactorAutoVerify) === false) {
+		const workflow = this._getWorkflowOptimizationConfig();
+		if (workflow.verifyOnEdit === 'never' || workflow.verifyOnEdit === 'defer') {
+			return last;
+		}
+		const editedPaths = extractEditedPathsFromToolArgs(toolName, args);
+		if (shouldSkipCompileVerificationForPaths(editedPaths)) {
+			return {
+				ok: last.ok,
+				text: `${last.text}\n\nSkipped compile verification (documentation-only edit: ${editedPaths.join(', ')}).`,
+			};
+		}
+		const isEditTool = isQuantumIDERefactorHostTool(toolName)
+			|| toolName === 'apply_workspace_edits'
+			|| toolName === 'apply_workspace_patch';
+		if (!isEditTool) {
+			return last;
+		}
+		if (isQuantumIDERefactorHostTool(toolName)
+			&& this._configurationService.getRootValue(quantumIDEOpenAIConfigSchema, QuantumIDEAISettingId.AgentRefactorAutoVerify) === false) {
 			return last;
 		}
 		try {
@@ -2166,11 +2295,11 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			const failed = /\b(error|failed|✖|exit code [1-9])\b/i.test(verify);
 			return {
 				ok: last.ok && !failed,
-				text: `${last.text}\n\nPost-refactor verification (compile):\n${verify}`,
+				text: `${last.text}\n\nPost-edit verification (compile):\n${verify}`,
 			};
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
-			return { ok: last.ok, text: `${last.text}\n\nPost-refactor verification skipped: ${message}` };
+			return { ok: last.ok, text: `${last.text}\n\nPost-edit verification skipped: ${message}` };
 		}
 	}
 
@@ -2200,16 +2329,20 @@ export class OpenAIAgent extends Disposable implements IAgent {
 			// new file — use replacement as-is
 		}
 		const policies = await loadQuantumIDEWorkspacePolicies(this._fileService, record.workingDirectory);
+		const workflow = this._getWorkflowOptimizationConfig();
+		const editVelocity = resolveEffectiveEditVelocity(workflow, [path]);
 		const result = await applyQuantumIDEWorkspaceEdits(this._fileService, record.workingDirectory, [{
 			operation: 'write',
 			path,
 			content,
-		}], {
+		}], resolveApplyWorkspaceEditsOptions({
+			editVelocity,
+			editCount: 1,
+			fastApplyEdits: workflow.fastApplyEdits,
+			requireDeleteConfirmation: workflow.requireDeleteConfirmation,
 			workingDirectory: record.workingDirectory,
-			atomic: true,
-			validateSyntax: true,
-			policies,
-		});
+			workspacePolicies: policies,
+		}));
 		return formatApplyWorkspaceEditsResult(result, `Applied approved propose_file_edit to ${path}`);
 	}
 

@@ -4,6 +4,7 @@
 
 import type { Parser, Query } from '@vscode/tree-sitter-wasm';
 import { extractAstSymbolsFromText, type IQuantumIDEAstSymbolEntry } from '../../../../platform/quantumide/common/quantumideAstSymbols.js';
+import { treeSitterSymbolEntry } from '../../../../platform/quantumide/common/quantumideTreeSitterAst.js';
 import {
 	QuantumIDERegexParserAdapter,
 	setDefaultQuantumIDEParserAdapter,
@@ -72,16 +73,7 @@ export class QuantumIDETreeSitterParserAdapter implements IQuantumIDEParserAdapt
 						continue;
 					}
 					const parentType = capture.node.parent?.type ?? '';
-					const kind = parentType.includes('class') ? 'class'
-						: parentType.includes('interface') ? 'interface'
-							: parentType.includes('method') ? 'method'
-								: 'function';
-					symbols.push({
-						path,
-						line: capture.node.startPosition.row + 1,
-						kind,
-						name,
-					});
+					symbols.push(treeSitterSymbolEntry(path, capture.node, parentType));
 				}
 				return symbols.length > 0 ? symbols : extractAstSymbolsFromText(path, text, maxPerFile);
 			} finally {
@@ -97,7 +89,8 @@ export class QuantumIDETreeSitterParserAdapter implements IQuantumIDEParserAdapt
 		try {
 			const ParserClass = await this._treeSitterLibraryService.getParserClass();
 			this._parser = new ParserClass();
-			for (const languageId of ['typescript', 'javascript', 'python']) {
+			const languageIds = [...new Set(Object.values(LANG_MAP))];
+			for (const languageId of languageIds) {
 				if (!this._treeSitterLibraryService.supportsLanguage(languageId, undefined)) {
 					continue;
 				}

@@ -2,21 +2,20 @@
  *  Copyright (c) QuantumIDE contributors. Licensed under the MIT License.
  *--------------------------------------------------------------------------------------------*/
 
-import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { Emitter } from '../../../../base/common/event.js';
 import { Disposable } from '../../../../base/common/lifecycle.js';
-import { joinPath } from '../../../../base/common/resources.js';
+import { extUriBiasedIgnorePathCase, joinPath } from '../../../../base/common/resources.js';
 import { URI } from '../../../../base/common/uri.js';
-import { generateUuid } from '../../../../base/common/uuid.js';
 import { isCodeEditor } from '../../../../editor/browser/editorBrowser.js';
 import { Position as EditorPosition } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { localize } from '../../../../nls.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
+import { ILogService } from '../../../../platform/log/common/log.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
-import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
+import { IWorkspaceContextService, type IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
 import { EditorResourceAccessor, SideBySideEditor } from '../../../common/editor.js';
 import { IEditorService } from '../../editor/common/editorService.js';
 import { IEditorGroupsService } from '../../editor/common/editorGroupsService.js';
@@ -26,23 +25,28 @@ import { ChatViewPaneTarget, IChatWidgetService } from '../../../contrib/chat/br
 import { IQuantumIDEChatEditSessionService } from './quantumideChatEditSessionService.js';
 import { IQuantumIDEFileExplorerTreeService } from '../common/quantumideFileExplorerTree.js';
 import {
+	IQuantumIDEWorkspaceEditorResourceState,
 	IQuantumIDEWorkspaceStateMeta,
 	IQuantumIDEWorkspaceStatePayload,
+	IQuantumIDEWorkspaceStatePersistOptions,
 	IQuantumIDEWorkspaceStateService,
 	QUANTUMIDE_SESSION_WORKING_SET_NAME,
-	QUANTUMIDE_WORKSPACE_STATE_DIR,
+	QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY,
 	QUANTUMIDE_WORKSPACE_STATE_STORAGE_KEY,
 	QUANTUMIDE_WORKSPACE_STATE_VERSION,
+	quantumIDEWorkspaceStateRoot,
 } from '../common/quantumideWorkspaceState.js';
-import { IQuantumIDEErrorRecoveryService } from '../common/quantumideErrorRecovery.js';
 
+/** Parts registered on the standard VS Code workbench layout (not Sessions-only CHATBAR_PART). */
 const LAYOUT_PARTS: readonly Parts[] = [
 	Parts.ACTIVITYBAR_PART,
 	Parts.SIDEBAR_PART,
 	Parts.PANEL_PART,
 	Parts.AUXILIARYBAR_PART,
-	Parts.CHATBAR_PART,
 ];
+
+const MAX_OPEN_RESOURCES_IN_SESSION = 96;
+const MAX_FILE_TREE_PATHS_IN_SESSION = 48;
 
 /** Avoid blocking the UI when reopening large workspace sessions (.code-workspace). */
 const MAX_RESTORE_OPEN_EDITORS = 24;
@@ -60,6 +64,7 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 
 	private _lastMeta: IQuantumIDEWorkspaceStateMeta | undefined;
 	private _restoring = false;
+	private _persistInFlight: Promise<IQuantumIDEWorkspaceStateMeta | undefined> | undefined;
 
 	constructor(
 		@IWorkspaceContextService private readonly _workspace: IWorkspaceContextService,
@@ -72,7 +77,7 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 		@IChatWidgetService private readonly _chatWidgets: IChatWidgetService,
 		@IQuantumIDEChatEditSessionService private readonly _chatEdits: IQuantumIDEChatEditSessionService,
 		@IQuantumIDEFileExplorerTreeService private readonly _fileTree: IQuantumIDEFileExplorerTreeService,
-		@IQuantumIDEErrorRecoveryService private readonly _errors: IQuantumIDEErrorRecoveryService,
+		@ILogService private readonly _logService: ILogService,
 	) {
 		super();
 		this._lastMeta = this._readMetaFromStorage();
@@ -82,46 +87,39 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 		return this._lastMeta;
 	}
 
-	async captureState(label?: string): Promise<IQuantumIDEWorkspaceStatePayload> {
-		const parts: Record<string, { visible: boolean; width: number; height: number }> = {};
-		for (const part of LAYOUT_PARTS) {
-			if (isMultiWindowPart(part)) {
-				continue;
-			}
-			const size = this._layout.getSize(part);
-			parts[part] = {
-				visible: this._layout.isVisible(part),
-				width: size.width,
-				height: size.height,
-			};
+	async captureState(label?: string, options: IQuantumIDEWorkspaceStatePersistOptions = {}): Promise<IQuantumIDEWorkspaceStatePayload> {
+		if (this._restoring) {
+			return this._captureMinimalState(label);
 		}
+		const parts = this._captureLayoutPartsSafe();
 
-		for (const ws of this._editorGroups.getWorkingSets()) {
-			if (ws.name === QUANTUMIDE_SESSION_WORKING_SET_NAME) {
-				this._editorGroups.deleteWorkingSet(ws);
+		let workingSetName: string | undefined;
+		if (options.captureWorkingSet === true) {
+			try {
+				for (const ws of this._editorGroups.getWorkingSets()) {
+					if (ws.name === QUANTUMIDE_SESSION_WORKING_SET_NAME) {
+						this._editorGroups.deleteWorkingSet(ws);
+					}
+				}
+				this._editorGroups.saveWorkingSet(QUANTUMIDE_SESSION_WORKING_SET_NAME);
+				workingSetName = QUANTUMIDE_SESSION_WORKING_SET_NAME;
+			} catch (err) {
+				this._logService.warn('[QuantumIDE] Editor working set capture skipped', err);
 			}
 		}
-		this._editorGroups.saveWorkingSet(QUANTUMIDE_SESSION_WORKING_SET_NAME);
 
 		const openResources: string[] = [];
-		const editorResources: {
-			resource: string;
-			cursorLine?: number;
-			cursorColumn?: number;
-			selectionStartLine?: number;
-			selectionStartColumn?: number;
-			selectionEndLine?: number;
-			selectionEndColumn?: number;
-		}[] = [];
-
 		for (const editor of this._editorService.editors) {
-			const resource = EditorResourceAccessor.getCanonicalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
-			if (!resource) {
-				continue;
+			if (openResources.length >= MAX_OPEN_RESOURCES_IN_SESSION) {
+				break;
 			}
-			openResources.push(resource.toString());
+			const resource = EditorResourceAccessor.getCanonicalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
+			if (resource) {
+				openResources.push(resource.toString());
+			}
 		}
 
+		const editorResources: IQuantumIDEWorkspaceEditorResourceState[] = [];
 		const control = this._editorService.activeTextEditorControl;
 		if (isCodeEditor(control)) {
 			const model = control.getModel();
@@ -147,102 +145,133 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 			: undefined;
 
 		const dirtyResources: string[] = [];
-		for (const model of this._textFiles.files.models) {
-			if (model.isDirty()) {
-				dirtyResources.push(model.resource.toString());
+		try {
+			for (const model of this._textFiles.files.models) {
+				if (model.isDirty()) {
+					dirtyResources.push(model.resource.toString());
+				}
 			}
+		} catch {
+			// ignore
 		}
 
-		const chatWidget = this._chatWidgets.lastFocusedWidget;
-		const activeChatSession = chatWidget?.viewModel?.sessionResource?.toString();
+		let activeChatSession: string | undefined;
+		try {
+			activeChatSession = this._chatWidgets.lastFocusedWidget?.viewModel?.sessionResource?.toString();
+		} catch {
+			// ignore
+		}
+
+		let panelPosition = 'bottom';
+		let panelAlignment = 'center';
+		try {
+			panelPosition = positionToString(this._layout.getPanelPosition());
+			panelAlignment = String(this._layout.getPanelAlignment());
+		} catch (err) {
+			this._logService.warn('[QuantumIDE] Layout metadata capture skipped', err);
+		}
+
+		let fileTreeExpanded: string[] = [];
+		try {
+			fileTreeExpanded = [...this._fileTree.getExpandedPaths()].slice(0, MAX_FILE_TREE_PATHS_IN_SESSION);
+		} catch {
+			// ignore
+		}
+
+		let pendingChatEdits = 0;
+		try {
+			pendingChatEdits = this._chatEdits.getPendingCount();
+		} catch {
+			// ignore
+		}
 
 		return {
 			version: QUANTUMIDE_WORKSPACE_STATE_VERSION,
 			savedAt: Date.now(),
 			label,
-			layout: {
-				panelPosition: positionToString(this._layout.getPanelPosition()),
-				panelAlignment: String(this._layout.getPanelAlignment()),
-				parts,
-			},
-			workingSetName: QUANTUMIDE_SESSION_WORKING_SET_NAME,
+			layout: { panelPosition, panelAlignment, parts },
+			workingSetName,
 			openResources,
 			activeResource,
 			editorResources,
 			dirtyResources,
 			activeChatSession,
-			pendingChatEdits: this._chatEdits.getPendingCount(),
-			fileTreeExpanded: this._fileTree.getExpandedPaths(),
+			pendingChatEdits,
+			fileTreeExpanded,
 		};
 	}
 
-	async persistState(label?: string): Promise<IQuantumIDEWorkspaceStateMeta | undefined> {
-		const folder = this._workspace.getWorkspace().folders[0];
-		if (!folder) {
-			return undefined;
+	async persistState(label?: string, options: IQuantumIDEWorkspaceStatePersistOptions = {}): Promise<IQuantumIDEWorkspaceStateMeta | undefined> {
+		if (this._persistInFlight) {
+			return this._persistInFlight;
 		}
+		this._persistInFlight = this._persistStateInner(label, options).finally(() => {
+			this._persistInFlight = undefined;
+		});
+		return this._persistInFlight;
+	}
+
+	private async _persistStateInner(label: string | undefined, options: IQuantumIDEWorkspaceStatePersistOptions): Promise<IQuantumIDEWorkspaceStateMeta | undefined> {
+		await this._layout.whenRestored;
+		let payload: IQuantumIDEWorkspaceStatePayload;
 		try {
-			const payload = await this.captureState(label);
-			const root = joinPath(folder.uri, QUANTUMIDE_WORKSPACE_STATE_DIR);
-			await this._files.createFolder(root);
-			const latestUri = joinPath(root, 'latest.json');
-			const historyUri = joinPath(root, `${payload.savedAt}.json`);
-			const json = JSON.stringify(payload, null, 2);
-			await this._files.writeFile(latestUri, VSBuffer.fromString(json));
-			await this._files.writeFile(historyUri, VSBuffer.fromString(json));
-			const history = await this.listHistory();
-			for (const entry of history.slice(20)) {
-				try {
-					await this._files.del(joinPath(root, `${entry.savedAt}.json`));
-				} catch {
-					// ignore
-				}
-			}
-			const meta: IQuantumIDEWorkspaceStateMeta = {
-				savedAt: payload.savedAt,
-				label: payload.label,
-				openFileCount: payload.openResources.length,
-			};
+			payload = await this.captureState(label, options);
+		} catch (err) {
+			this._logService.warn('[QuantumIDE] Full session capture failed; saving minimal snapshot', err);
+			payload = await this._captureMinimalState(label);
+		}
+		payload = this._sanitizePayload(payload);
+
+		const meta: IQuantumIDEWorkspaceStateMeta = {
+			savedAt: payload.savedAt,
+			label: payload.label,
+			openFileCount: payload.openResources.length,
+		};
+
+		let storageOk = false;
+		try {
+			this._storage.store(QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY, JSON.stringify(payload), StorageScope.WORKSPACE, StorageTarget.USER);
 			this._storage.store(QUANTUMIDE_WORKSPACE_STATE_STORAGE_KEY, JSON.stringify(meta), StorageScope.WORKSPACE, StorageTarget.USER);
+			storageOk = true;
+		} catch (err) {
+			this._logService.warn('[QuantumIDE] Workspace session storage fallback failed', err);
+		}
+
+		const diskOk = await this._writePayloadToDisk(payload);
+
+		if (storageOk || diskOk) {
 			this._lastMeta = meta;
 			this._onDidChange.fire();
 			return meta;
-		} catch (err) {
-			this._errors.report({
-				id: generateUuid(),
-				message: localize('quantumide.workspaceState.persistFailed', 'Failed to save workspace session.'),
-				recoverable: true,
-				retryCommand: 'quantumide.workspace.saveSession',
-			});
+		}
+
+		const detail = localize('quantumide.workspaceState.persistNoTarget', 'No writable workspace folder and workspace storage is unavailable.');
+		this._logService.error(`[QuantumIDE] Failed to save workspace session: ${detail}`);
+		if (options.notifyOnFailure === true) {
+			// Caller (Save Workspace Session command) shows a single notification — never QuantumIDE error-recovery toasts.
 			return undefined;
 		}
+		return undefined;
 	}
 
 	async restoreLastState(): Promise<{ ok: boolean; error?: string }> {
-		const folder = this._workspace.getWorkspace().folders[0];
-		if (!folder) {
-			return { ok: false, error: localize('quantumide.workspaceState.noFolder', 'Open a workspace folder first.') };
+		const payload = await this._loadLatestPayload();
+		if (!payload) {
+			return { ok: false, error: localize('quantumide.workspaceState.noFolder', 'No saved workspace session found.') };
 		}
-		const latestUri = joinPath(folder.uri, QUANTUMIDE_WORKSPACE_STATE_DIR, 'latest.json');
-		try {
-			const raw = (await this._files.readFile(latestUri)).value.toString();
-			const payload = JSON.parse(raw) as IQuantumIDEWorkspaceStatePayload;
-			return this._applyPayload(payload);
-		} catch (err) {
-			return { ok: false, error: String(err) };
-		}
+		return this._applyPayload(payload);
 	}
 
 	async listHistory(): Promise<readonly IQuantumIDEWorkspaceStateMeta[]> {
-		const folder = this._workspace.getWorkspace().folders[0];
+		const folder = this._resolvePersistFolder();
 		if (!folder) {
-			return [];
+			return this._lastMeta ? [this._lastMeta] : [];
 		}
-		const root = joinPath(folder.uri, QUANTUMIDE_WORKSPACE_STATE_DIR);
+		const root = quantumIDEWorkspaceStateRoot(folder.uri);
 		try {
 			const stat = await this._files.resolve(root);
 			if (!stat.children) {
-				return [];
+				return this._lastMeta ? [this._lastMeta] : [];
 			}
 			const metas: IQuantumIDEWorkspaceStateMeta[] = [];
 			for (const child of stat.children) {
@@ -250,11 +279,11 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 					continue;
 				}
 				try {
-					const payload = JSON.parse((await this._files.readFile(child.resource)).value.toString()) as IQuantumIDEWorkspaceStatePayload;
+					const parsed = JSON.parse((await this._files.readFile(child.resource)).value.toString()) as IQuantumIDEWorkspaceStatePayload;
 					metas.push({
-						savedAt: payload.savedAt,
-						label: payload.label,
-						openFileCount: payload.openResources.length,
+						savedAt: parsed.savedAt,
+						label: parsed.label,
+						openFileCount: parsed.openResources.length,
 					});
 				} catch {
 					// skip corrupt
@@ -262,22 +291,113 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 			}
 			return metas.sort((a, b) => b.savedAt - a.savedAt);
 		} catch {
-			return [];
+			return this._lastMeta ? [this._lastMeta] : [];
 		}
 	}
 
 	async restoreFromHistory(savedAt: number): Promise<{ ok: boolean; error?: string }> {
-		const folder = this._workspace.getWorkspace().folders[0];
+		const folder = this._resolvePersistFolder();
 		if (!folder) {
 			return { ok: false, error: localize('quantumide.workspaceState.noFolder', 'Open a workspace folder first.') };
 		}
-		const uri = joinPath(folder.uri, QUANTUMIDE_WORKSPACE_STATE_DIR, `${savedAt}.json`);
+		const uri = joinPath(quantumIDEWorkspaceStateRoot(folder.uri), `${savedAt}.json`);
 		try {
 			const raw = (await this._files.readFile(uri)).value.toString();
 			return this._applyPayload(JSON.parse(raw) as IQuantumIDEWorkspaceStatePayload);
 		} catch (err) {
 			return { ok: false, error: String(err) };
 		}
+	}
+
+	/** No background auto-save — prevents agent/chat/editor events from surfacing save errors. */
+	scheduleAutoSave(): void {
+		// intentional no-op
+	}
+
+	private _sanitizePayload(payload: IQuantumIDEWorkspaceStatePayload): IQuantumIDEWorkspaceStatePayload {
+		return {
+			...payload,
+			openResources: payload.openResources.slice(0, MAX_OPEN_RESOURCES_IN_SESSION),
+			fileTreeExpanded: payload.fileTreeExpanded.slice(0, MAX_FILE_TREE_PATHS_IN_SESSION),
+		};
+	}
+
+	private async _loadLatestPayload(): Promise<IQuantumIDEWorkspaceStatePayload | undefined> {
+		const folder = this._resolvePersistFolder();
+		if (folder) {
+			const latestUri = joinPath(quantumIDEWorkspaceStateRoot(folder.uri), 'latest.json');
+			try {
+				const raw = (await this._files.readFile(latestUri)).value.toString();
+				return JSON.parse(raw) as IQuantumIDEWorkspaceStatePayload;
+			} catch {
+				// fall through to storage
+			}
+		}
+		try {
+			const raw = this._storage.get(QUANTUMIDE_WORKSPACE_STATE_PAYLOAD_KEY, StorageScope.WORKSPACE);
+			if (raw) {
+				return JSON.parse(raw) as IQuantumIDEWorkspaceStatePayload;
+			}
+		} catch {
+			// ignore
+		}
+		return undefined;
+	}
+
+	private async _writePayloadToDisk(payload: IQuantumIDEWorkspaceStatePayload): Promise<boolean> {
+		let json: string;
+		try {
+			json = JSON.stringify(payload, null, 2);
+		} catch (err) {
+			this._logService.warn('[QuantumIDE] Session JSON stringify failed', err);
+			return false;
+		}
+		for (const folder of this._getFileWorkspaceFolders()) {
+			try {
+				const root = await this._ensureStateRoot(folder.uri);
+				const latestUri = joinPath(root, 'latest.json');
+				await this._writeStateJson(latestUri, json);
+				try {
+					const historyUri = joinPath(root, `${payload.savedAt}.json`);
+					await this._writeStateJson(historyUri, json);
+				} catch {
+					// history is optional
+				}
+				return true;
+			} catch (err) {
+				this._logService.warn(`[QuantumIDE] Session disk write failed for ${folder.uri.fsPath}`, err);
+			}
+		}
+		return false;
+	}
+
+	private async _captureMinimalState(label?: string): Promise<IQuantumIDEWorkspaceStatePayload> {
+		const openResources: string[] = [];
+		for (const editor of this._editorService.editors) {
+			if (openResources.length >= MAX_OPEN_RESOURCES_IN_SESSION) {
+				break;
+			}
+			const resource = EditorResourceAccessor.getCanonicalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY });
+			if (resource) {
+				openResources.push(resource.toString());
+			}
+		}
+		const active = this._editorService.activeEditor;
+		const activeResource = active
+			? EditorResourceAccessor.getCanonicalUri(active, { supportSideBySide: SideBySideEditor.PRIMARY })?.toString()
+			: undefined;
+		return {
+			version: QUANTUMIDE_WORKSPACE_STATE_VERSION,
+			savedAt: Date.now(),
+			label,
+			layout: { panelPosition: 'bottom', panelAlignment: 'center', parts: {} },
+			openResources,
+			activeResource,
+			editorResources: [],
+			dirtyResources: [],
+			pendingChatEdits: 0,
+			fileTreeExpanded: [],
+		};
 	}
 
 	private async _applyPayload(payload: IQuantumIDEWorkspaceStatePayload): Promise<{ ok: boolean; error?: string }> {
@@ -295,26 +415,22 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 
 			await this._openRestoredEditors(payload.openResources, payload.activeResource);
 
-			for (const part of LAYOUT_PARTS) {
-				if (isMultiWindowPart(part)) {
-					continue;
-				}
-				const state = payload.layout.parts[part];
-				if (!state) {
-					continue;
-				}
-				this._layout.setPartHidden(!state.visible, part);
-				if (state.visible) {
-					this._layout.setSize(part, { width: state.width, height: state.height });
-				}
-			}
+			this._applyLayoutPartsSafe(payload.layout.parts);
 
 			if (payload.layout.panelPosition) {
-				this._layout.setPanelPosition(positionFromString(payload.layout.panelPosition));
+				try {
+					this._layout.setPanelPosition(positionFromString(payload.layout.panelPosition));
+				} catch {
+					// ignore
+				}
 			}
 			const alignment = payload.layout.panelAlignment as PanelAlignment;
 			if (alignment === 'left' || alignment === 'center' || alignment === 'right' || alignment === 'justify') {
-				this._layout.setPanelAlignment(alignment);
+				try {
+					this._layout.setPanelAlignment(alignment);
+				} catch {
+					// ignore
+				}
 			}
 
 			const activeControl = this._editorService.activeTextEditorControl;
@@ -333,11 +449,19 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 			}
 
 			for (const path of payload.fileTreeExpanded) {
-				this._fileTree.setExpanded(path, true);
+				try {
+					this._fileTree.setExpanded(path, true);
+				} catch {
+					// ignore
+				}
 			}
 
 			if (payload.activeChatSession) {
-				await this._chatWidgets.openSession(URI.parse(payload.activeChatSession), ChatViewPaneTarget);
+				try {
+					await this._chatWidgets.openSession(URI.parse(payload.activeChatSession), ChatViewPaneTarget);
+				} catch {
+					// ignore
+				}
 			}
 
 			this._ensureWorkbenchShellVisible(payload);
@@ -382,26 +506,106 @@ export class QuantumIDEWorkspaceStateService extends Disposable implements IQuan
 		}
 	}
 
+	private async _ensureStateRoot(folderUri: URI): Promise<URI> {
+		const quantumideDir = joinPath(folderUri, '.quantumide');
+		await this._files.createFolder(quantumideDir);
+		const root = quantumIDEWorkspaceStateRoot(folderUri);
+		await this._files.createFolder(root);
+		return root;
+	}
+
+	private async _writeStateJson(uri: URI, json: string): Promise<void> {
+		const buffer = VSBuffer.fromString(json);
+		try {
+			if (await this._files.exists(uri)) {
+				await this._files.writeFile(uri, buffer);
+			} else {
+				await this._files.createFile(uri, buffer, { overwrite: true });
+			}
+		} catch (err) {
+			if (await this._files.exists(uri)) {
+				throw err;
+			}
+			await this._files.writeFile(uri, buffer);
+		}
+	}
+
+	private _getFileWorkspaceFolders(): readonly IWorkspaceFolder[] {
+		return this._workspace.getWorkspace().folders.filter(f => f.uri.scheme === 'file');
+	}
+
+	private _resolvePersistFolder(): IWorkspaceFolder | undefined {
+		const fileFolders = this._getFileWorkspaceFolders();
+		if (fileFolders.length === 0) {
+			return undefined;
+		}
+		const active = this._editorService.activeEditor;
+		const activeUri = active
+			? EditorResourceAccessor.getCanonicalUri(active, { supportSideBySide: SideBySideEditor.PRIMARY })
+			: undefined;
+		if (activeUri) {
+			for (const folder of fileFolders) {
+				if (extUriBiasedIgnorePathCase.isEqualOrParent(activeUri, folder.uri)) {
+					return folder;
+				}
+			}
+		}
+		return fileFolders[0];
+	}
+
+	private _captureLayoutPartsSafe(): Record<string, { visible: boolean; width: number; height: number }> {
+		const parts: Record<string, { visible: boolean; width: number; height: number }> = {};
+		for (const part of LAYOUT_PARTS) {
+			if (isMultiWindowPart(part)) {
+				continue;
+			}
+			try {
+				const size = this._layout.getSize(part);
+				parts[part] = {
+					visible: this._layout.isVisible(part),
+					width: size.width,
+					height: size.height,
+				};
+			} catch {
+				// Part not registered on this workbench layout.
+			}
+		}
+		return parts;
+	}
+
+	private _applyLayoutPartsSafe(parts: Record<string, { visible: boolean; width: number; height: number }>): void {
+		for (const part of LAYOUT_PARTS) {
+			if (isMultiWindowPart(part)) {
+				continue;
+			}
+			const state = parts[part];
+			if (!state) {
+				continue;
+			}
+			try {
+				this._layout.setPartHidden(!state.visible, part);
+				if (state.visible) {
+					this._layout.setSize(part, { width: state.width, height: state.height });
+				}
+			} catch {
+				// ignore
+			}
+		}
+	}
+
 	private _ensureWorkbenchShellVisible(payload: IQuantumIDEWorkspaceStatePayload): void {
-		this._layout.setPartHidden(false, Parts.EDITOR_PART);
-		const chromeParts = LAYOUT_PARTS.filter(p => p !== Parts.AUXILIARYBAR_PART && p !== Parts.CHATBAR_PART);
-		const allChromeHidden = chromeParts.every(p => payload.layout.parts[p]?.visible === false);
-		if (allChromeHidden) {
-			this._layout.setPartHidden(false, Parts.ACTIVITYBAR_PART);
-			this._layout.setPartHidden(false, Parts.SIDEBAR_PART);
+		try {
+			this._layout.setPartHidden(false, Parts.EDITOR_PART);
+			const chromeParts = LAYOUT_PARTS.filter(p => p !== Parts.AUXILIARYBAR_PART);
+			const allChromeHidden = chromeParts.every(p => payload.layout.parts[p]?.visible === false);
+			if (allChromeHidden) {
+				this._layout.setPartHidden(false, Parts.ACTIVITYBAR_PART);
+				this._layout.setPartHidden(false, Parts.SIDEBAR_PART);
+			}
+		} catch {
+			// ignore
 		}
 	}
-
-	scheduleAutoSave(): void {
-		this._autoSaveScheduler.schedule();
-	}
-
-	private readonly _autoSaveScheduler = this._register(new RunOnceScheduler(() => {
-		if (this._restoring) {
-			return;
-		}
-		void this.persistState();
-	}, 2500));
 
 	private _readMetaFromStorage(): IQuantumIDEWorkspaceStateMeta | undefined {
 		try {

@@ -12,19 +12,49 @@ import { ICodeEditorService } from '../../../../editor/browser/services/codeEdit
 import { Range } from '../../../../editor/common/core/range.js';
 import { MarkerSeverity } from '../../../../platform/markers/common/markers.js';
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
-import { IFileService, type IFileStat } from '../../../../platform/files/common/files.js';
+import { FileChangesEvent, IFileService, type IFileStat } from '../../../../platform/files/common/files.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IMarkerService } from '../../../../platform/markers/common/markers.js';
-import { QUANTUMIDE_AI_WORKSPACE_INDEX_STORAGE_KEY, QuantumIDEManifestKind, QuantumIDEWorkspaceIndexExcludeNames, createEmptyQuantumIDEWorkspaceGraph, detectQuantumIDEManifestKind, getQuantumIDEManifestEcosystem, summarizeQuantumIDEWorkspaceGraph, type IQuantumIDEFileNode, type IQuantumIDEManifestNode, type IQuantumIDEProjectNode, type IQuantumIDEWorkspaceFolderNode, type IQuantumIDEWorkspaceGraph } from '../../../../platform/quantumide/common/quantumideWorkspaceGraph.js';
+import {
+	computeQuantumIDELiteGraphEffectiveMaxFiles,
+	computeQuantumIDELiteGraphPerRootBudget,
+	QUANTUMIDE_LITE_GRAPH_MAX_DEPTH,
+	QUANTUMIDE_LITE_GRAPH_MAX_FILES,
+} from '../../../../platform/quantumide/common/quantumideLiteGraphValidation.js';
+import {
+	formatQuantumIDEWorkspaceTrustWarningForContext,
+	isQuantumIDEWorkspaceGraphUntrusted,
+	QUANTUMIDE_WORKSPACE_UNTRUSTED_REASON,
+} from '../../../../platform/quantumide/common/quantumideWorkspaceTrust.js';
+import { QUANTUMIDE_AI_WORKSPACE_INDEX_STORAGE_KEY, QuantumIDEManifestKind, QuantumIDEWorkspaceIndexExcludeNames, createEmptyQuantumIDEWorkspaceGraph, detectQuantumIDEManifestKind, getQuantumIDEManifestEcosystem, summarizeQuantumIDEWorkspaceGraph, type IQuantumIDEFileNode, type IQuantumIDEManifestNode, type IQuantumIDEProjectNode, type IQuantumIDEWorkspaceFolderNode, type IQuantumIDEWorkspaceGraph, type IQuantumIDEWorkspaceRootScanSummary } from '../../../../platform/quantumide/common/quantumideWorkspaceGraph.js';
 import { QuantumIDEAISettingId } from '../../../../platform/quantumide/common/quantumideAISettings.js';
+import { formatQuantumIDEWorkspaceContextHeaders } from '../../../../platform/quantumide/common/quantumideLiteSnapshotContext.js';
 import { StorageScope, StorageTarget, IStorageService } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IWorkspaceContextService, type IWorkspaceFolder } from '../../../../platform/workspace/common/workspace.js';
 import { ISCMService } from '../../../contrib/scm/common/scm.js';
+import { collectAgentSearchRoots, formatWorkspaceFolderLinks } from '../../../../platform/quantumide/common/quantumideWorkspaceRoots.js';
+import {
+	isQuantumIDEPathIgnored,
+	type IQuantumIDEWorkspaceIgnorePolicy,
+} from '../../../../platform/quantumide/common/quantumideWorkspaceIgnore.js';
+import { mergeQuantumIDEIndexingExcludePatterns } from '../../../../platform/quantumide/common/quantumideIndexingExcludePatterns.js';
+import { loadQuantumIDEWorkspaceIgnorePolicy } from '../../../../platform/quantumide/common/quantumideWorkspaceIgnoreLoader.js';
+import { formatQuantumIDEWorkspaceDiscoveryLog } from '../../../../platform/quantumide/common/quantumideWorkspaceDiscoveryLog.js';
+import { clipQuantumIDEUtf16Safe } from '../../../../platform/quantumide/common/quantumideUtf16Clip.js';
+import { recordQuantumIDEWorkspaceGraphRefresh } from '../../../../platform/quantumide/common/quantumideWorkspaceDiscoveryTelemetry.js';
+import {
+	planWorkspaceGraphFileWatcherRefresh,
+	QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS,
+	QUANTUMIDE_FILE_WATCHER_INCREMENTAL_DEBOUNCE_MS,
+	QUANTUMIDE_FILE_WATCHER_MAX_INCREMENTAL_CHANGES,
+} from '../../../../platform/quantumide/common/quantumideWorkspaceGraphWatcher.js';
 import { IQuantumIDEWorkspaceContextBuildOptions, IQuantumIDEWorkspaceContextService } from '../common/quantumideWorkspaceContext.js';
 
 const MAX_SCAN_DEPTH = 6;
+const MAX_LITE_SCAN_DEPTH = QUANTUMIDE_LITE_GRAPH_MAX_DEPTH;
+const MAX_LITE_INDEX_FILES = QUANTUMIDE_LITE_GRAPH_MAX_FILES;
 const MIN_INDEX_FILES = 100;
 const MAX_INDEX_FILES = 1_000;
 const MAX_CONTEXT_CHARS = 14_000;
@@ -47,6 +77,7 @@ interface IQuantumIDEScanState {
 	}>;
 	visited: number;
 	truncated: boolean;
+	ignoredPathCount: number;
 }
 
 export class QuantumIDEWorkspaceContextService extends Disposable implements IQuantumIDEWorkspaceContextService {
@@ -56,13 +87,22 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 	readonly onDidChangeGraph = this._onDidChangeGraph.event;
 
 	private readonly _refreshScheduler = this._register(new RunOnceScheduler(() => {
-		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true) {
-			void this.refreshWorkspaceGraph('workspace change');
-		}
+		void this.refreshWorkspaceGraph('workspace change');
 	}, 1_500));
+
+	private readonly _fileWatcherRefreshScheduler = this._register(new RunOnceScheduler(() => {
+		void this.refreshWorkspaceGraph('file watcher debounced');
+	}, QUANTUMIDE_FILE_WATCHER_FULL_REFRESH_DEBOUNCE_MS));
+
+	private readonly _incrementalScheduler = this._register(new RunOnceScheduler(() => {
+		void this._runIncrementalGraphPatch();
+	}, QUANTUMIDE_FILE_WATCHER_INCREMENTAL_DEBOUNCE_MS));
 
 	private _graph: IQuantumIDEWorkspaceGraph | undefined;
 	private _refreshPromise: Promise<IQuantumIDEWorkspaceGraph> | undefined;
+	private _ignorePolicy: IQuantumIDEWorkspaceIgnorePolicy | undefined;
+	private _scanRotation = 0;
+	private _lastFileChangeEvent: FileChangesEvent | undefined;
 
 	constructor(
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
@@ -77,15 +117,40 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 	) {
 		super();
 		this._graph = this._readStoredGraph();
-		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => this._refreshScheduler.schedule()));
-		this._register(this._fileService.onDidFilesChange(() => this._refreshScheduler.schedule()));
+		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => {
+			this._ignorePolicy = undefined;
+			this._logService.debug(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'workspace-graph',
+				operation: 'workspace-folders-changed',
+				fileCount: this._workspaceContextService.getWorkspace().folders.length,
+			}));
+			this._refreshScheduler.schedule();
+		}));
+		this._register(this._fileService.onDidFilesChange(e => {
+			this._lastFileChangeEvent = e;
+			this._scheduleFileWatcherGraphRefresh(e);
+		}));
 		this._register(this._workspaceTrustManagementService.onDidChangeTrust(() => this._refreshScheduler.schedule()));
-		// Defer first scan so opening a .code-workspace file can render the shell before indexing.
-		this._register(new RunOnceScheduler(() => {
-			if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true) {
+		this._register(this._configurationService.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration(QuantumIDEAISettingId.IndexingExcludePatterns)
+				|| e.affectsConfiguration(QuantumIDEAISettingId.IndexingIgnoreFile)
+				|| e.affectsConfiguration(QuantumIDEAISettingId.IndexingEnabled)) {
+				this._ignorePolicy = undefined;
 				this._refreshScheduler.schedule();
 			}
-		}, 8_000)).schedule();
+		}));
+		// Defer first scan so opening a .code-workspace file can render the shell before indexing.
+		// Multi-root workspaces (§11): schedule sooner so lite graph is ready within ~10s.
+		const folderCount = this._workspaceContextService.getWorkspace().folders.length;
+		const initialDeferMs = folderCount >= 5 ? 2_000 : folderCount >= 2 ? 4_000 : 8_000;
+		this._register(new RunOnceScheduler(() => {
+			this._refreshScheduler.schedule();
+		}, initialDeferMs)).schedule();
+		if (folderCount >= 5 && this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+			queueMicrotask(() => {
+				void this.refreshWorkspaceGraph('multi-root lite prefetch');
+			});
+		}
 	}
 
 	getWorkspaceGraph(): IQuantumIDEWorkspaceGraph | undefined {
@@ -104,19 +169,21 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 
 	async buildWorkspaceContext(options: IQuantumIDEWorkspaceContextBuildOptions = {}): Promise<string> {
 		const maxChars = options.maxChars ?? MAX_CONTEXT_CHARS;
+		const folders = this._getWorkspaceFolders();
 		let graph = this._graph;
-		if (!graph && this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true) {
+		if ((!graph || graph.files.length === 0) && folders.length > 0) {
 			graph = await this.refreshWorkspaceGraph('context build');
 		}
-		graph ??= createEmptyQuantumIDEWorkspaceGraph(this._workspaceContextService.getWorkspace().id, this._getWorkspaceFolders(), 'Workspace graph has not been built yet.');
+		graph ??= createEmptyQuantumIDEWorkspaceGraph(this._workspaceContextService.getWorkspace().id, folders, 'Workspace graph has not been built yet.');
 
+		const indexingEnabled = this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true;
 		const sections: string[] = [
-			'QuantumIDE workspace intelligence context',
-			'Use this local, bounded workspace snapshot to answer project-structure questions. Do not assume files outside this snapshot were inspected.',
-			'',
-			'Workspace:',
-			...this._formatWorkspaceGraph(graph),
+			...formatQuantumIDEWorkspaceContextHeaders(indexingEnabled),
 		];
+		if (isQuantumIDEWorkspaceGraphUntrusted(graph)) {
+			sections.push('', formatQuantumIDEWorkspaceTrustWarningForContext());
+		}
+		sections.push('', 'Workspace:', ...this._formatWorkspaceGraph(graph));
 
 		if (options.includeActiveEditor !== false) {
 			sections.push('', 'Active editor:', this._buildActiveEditorContext());
@@ -131,7 +198,40 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		return this._clip(sections.join('\n'), maxChars);
 	}
 
+	async buildWorkspaceContextByRoot(options: IQuantumIDEWorkspaceContextBuildOptions = {}): Promise<{ primary: string; secondary?: string }> {
+		const prefer = options.preferRootFolderName ?? this._getActiveRootFolderName();
+		const maxChars = options.maxChars ?? MAX_CONTEXT_CHARS;
+		const folders = this._getWorkspaceFolders();
+		let graph = this._graph;
+		if ((!graph || graph.files.length === 0) && folders.length > 0) {
+			graph = await this.refreshWorkspaceGraph('context build');
+		}
+		graph ??= createEmptyQuantumIDEWorkspaceGraph(this._workspaceContextService.getWorkspace().id, folders, 'Workspace graph has not been built yet.');
+		const indexingEnabled = this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) === true;
+		const header = [...formatQuantumIDEWorkspaceContextHeaders(indexingEnabled)];
+		if (prefer && options.splitRootsForRanking !== false) {
+			const primaryLines = [...header, '', `Workspace (root: ${prefer}):`, ...this._formatWorkspaceGraph(graph, prefer, this._getMaxContextFiles())];
+			const otherLines = this._formatWorkspaceGraphOtherRoots(graph, prefer, 8);
+			const primary = this._clip(primaryLines.join('\n'), Math.floor(maxChars * 0.65));
+			const secondary = otherLines.length
+				? this._clip(['Other workspace roots (lower priority):', ...otherLines].join('\n'), Math.floor(maxChars * 0.35))
+				: undefined;
+			return { primary, secondary };
+		}
+		return { primary: this._clip([...header, '', 'Workspace:', ...this._formatWorkspaceGraph(graph)].join('\n'), maxChars) };
+	}
+
+	private _getActiveRootFolderName(): string | undefined {
+		const uri = this._codeEditorService.getActiveCodeEditor()?.getModel()?.uri;
+		if (!uri) {
+			return undefined;
+		}
+		const folder = this._workspaceContextService.getWorkspaceFolder(uri);
+		return folder?.name;
+	}
+
 	private async _doRefreshWorkspaceGraph(reason: string): Promise<IQuantumIDEWorkspaceGraph> {
+		this._ignorePolicy = undefined;
 		const workspace = this._workspaceContextService.getWorkspace();
 		const folders = this._getWorkspaceFolders();
 		if (folders.length === 0) {
@@ -139,29 +239,41 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 			this._storeGraph(graph);
 			return graph;
 		}
-		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) !== true) {
-			const graph = createEmptyQuantumIDEWorkspaceGraph(workspace.id, folders, 'Workspace indexing is disabled.');
+		if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+			const graph = createEmptyQuantumIDEWorkspaceGraph(workspace.id, folders, QUANTUMIDE_WORKSPACE_UNTRUSTED_REASON);
 			this._storeGraph(graph);
+			this._logService.info(formatQuantumIDEWorkspaceDiscoveryLog({
+				component: 'workspace-graph',
+				operation: 'refresh-untrusted',
+				fileCount: 0,
+			}));
 			return graph;
 		}
-		if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
-			const graph = createEmptyQuantumIDEWorkspaceGraph(workspace.id, folders, 'Workspace is not trusted.');
-			this._storeGraph(graph);
-			return graph;
+		if (this._configurationService.getValue<boolean>(QuantumIDEAISettingId.IndexingEnabled) !== true) {
+			return this._buildLiteWorkspaceGraph(workspace.id, folders, reason);
 		}
 
 		const maxFiles = this._getMaxIndexFiles();
 		const files: IQuantumIDEFileNode[] = [];
 		const manifests: IQuantumIDEManifestNode[] = [];
 		const projectsByRoot = new Map<string, IQuantumIDEScanState['projectsByRoot'] extends Map<string, infer T> ? T : never>();
-		const excludedNames = this._getExcludedIndexNames();
 		let truncated = false;
 
-		for (const folder of workspace.folders) {
+		const policy = await this._ensureIgnorePolicy();
+		const excludedNames = policy.excludedDirectoryNames;
+		const perFolderBudget = Math.max(10, Math.floor(maxFiles / Math.max(1, workspace.folders.length)));
+		const perRoot: IQuantumIDEWorkspaceRootScanSummary[] = [];
+		const rotated = this._rotatedWorkspaceFolders(workspace.folders);
+		const refreshStart = Date.now();
+		let totalIgnored = 0;
+		for (const folder of rotated) {
 			if (files.length >= maxFiles) {
 				truncated = true;
-				break;
+				perRoot.push({ folderName: folder.name, filesIndexed: 0, truncated: true });
+				continue;
 			}
+			const countBefore = files.length;
+			const folderLimit = Math.min(maxFiles, files.length + perFolderBudget);
 			const state: IQuantumIDEScanState = {
 				workspaceFolder: folder,
 				rootRelativePrefix: folder.name,
@@ -170,10 +282,18 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 				projectsByRoot,
 				visited: files.length,
 				truncated: false,
+				ignoredPathCount: 0,
 			};
-			await this._scanResource(folder.uri, state, 0, maxFiles, excludedNames);
-			truncated = truncated || state.truncated;
+			await this._scanResource(folder.uri, state, 0, folderLimit, excludedNames, MAX_SCAN_DEPTH, policy);
+			totalIgnored += state.ignoredPathCount;
+			truncated = truncated || state.truncated || files.length >= maxFiles;
+			perRoot.push({
+				folderName: folder.name,
+				filesIndexed: files.length - countBefore,
+				truncated: state.truncated || files.length >= maxFiles,
+			});
 		}
+		this._scanRotation++;
 
 		const projects = this._createProjects(projectsByRoot);
 		const graph: IQuantumIDEWorkspaceGraph = {
@@ -189,15 +309,226 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 				reason,
 				truncated,
 				fileLimit: maxFiles,
+				perRoot,
 			},
 		};
 		this._storeGraph(graph);
-		this._logService.info(`[QuantumIDE] Workspace intelligence refreshed: ${summarizeQuantumIDEWorkspaceGraph(graph)}`);
+		const durationMs = Date.now() - refreshStart;
+		recordQuantumIDEWorkspaceGraphRefresh({
+			durationMs,
+			fileCount: graph.files.length,
+			truncated: !!graph.status.truncated,
+			ignoredPathCount: totalIgnored,
+		});
+		this._logService.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'workspace-graph',
+			operation: 'refresh-full',
+			fileCount: graph.files.length,
+			truncated: graph.status.truncated,
+			durationMs,
+		}) + ` ${summarizeQuantumIDEWorkspaceGraph(graph)}`);
+		this._logService.debug(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'ignore-policy',
+			operation: 'scan-ignored-paths',
+			matchCount: totalIgnored,
+		}));
 		return graph;
 	}
 
-	private async _scanResource(resource: URI, state: IQuantumIDEScanState, depth: number, maxFiles: number, excludedNames: ReadonlySet<string>): Promise<void> {
-		if (depth > MAX_SCAN_DEPTH || state.files.length >= maxFiles) {
+	private _rotatedWorkspaceFolders(folders: readonly IWorkspaceFolder[]): readonly IWorkspaceFolder[] {
+		if (folders.length <= 1) {
+			return folders;
+		}
+		const offset = this._scanRotation % folders.length;
+		return [...folders.slice(offset), ...folders.slice(0, offset)];
+	}
+
+	/** Shallow snapshot for agent context when full indexing is off — still lists every workspace root and top-level layout. */
+	private async _buildLiteWorkspaceGraph(workspaceId: string, folders: readonly IQuantumIDEWorkspaceFolderNode[], reason: string): Promise<IQuantumIDEWorkspaceGraph> {
+		const workspace = this._workspaceContextService.getWorkspace();
+		const files: IQuantumIDEFileNode[] = [];
+		const manifests: IQuantumIDEManifestNode[] = [];
+		const projectsByRoot = new Map<string, IQuantumIDEScanState['projectsByRoot'] extends Map<string, infer T> ? T : never>();
+		let truncated = false;
+
+		const policy = await this._ensureIgnorePolicy();
+		const excludedNames = policy.excludedDirectoryNames;
+		const rootCount = workspace.folders.length;
+		const litePerFolder = computeQuantumIDELiteGraphPerRootBudget(rootCount);
+		const effectiveMaxFiles = computeQuantumIDELiteGraphEffectiveMaxFiles(rootCount);
+		const perRoot: IQuantumIDEWorkspaceRootScanSummary[] = [];
+		for (const folder of this._rotatedWorkspaceFolders(workspace.folders)) {
+			const countBefore = files.length;
+			const folderLimit = Math.min(effectiveMaxFiles, files.length + litePerFolder);
+			const state: IQuantumIDEScanState = {
+				workspaceFolder: folder,
+				rootRelativePrefix: folder.name,
+				files,
+				manifests,
+				projectsByRoot,
+				visited: files.length,
+				truncated: false,
+				ignoredPathCount: 0,
+			};
+			await this._scanResource(folder.uri, state, 0, folderLimit, excludedNames, MAX_LITE_SCAN_DEPTH, policy);
+			truncated = truncated || state.truncated || files.length >= effectiveMaxFiles;
+			perRoot.push({
+				folderName: folder.name,
+				filesIndexed: files.length - countBefore,
+				truncated: state.truncated || files.length >= effectiveMaxFiles,
+			});
+		}
+
+		const graph: IQuantumIDEWorkspaceGraph = {
+			version: 1,
+			workspaceId,
+			folders,
+			projects: this._createProjects(projectsByRoot),
+			manifests,
+			files,
+			status: {
+				indexed: true,
+				generatedAt: new Date().toISOString(),
+				reason: `${reason} (lite snapshot; full indexing disabled)`,
+				truncated: truncated || files.length > MAX_LITE_INDEX_FILES,
+				fileLimit: effectiveMaxFiles,
+				perRoot,
+			},
+		};
+		this._storeGraph(graph);
+		this._logService.info(`[QuantumIDE] Workspace lite snapshot refreshed: ${summarizeQuantumIDEWorkspaceGraph(graph)}`);
+		return graph;
+	}
+
+	private async _ensureIgnorePolicy(): Promise<IQuantumIDEWorkspaceIgnorePolicy> {
+		if (this._ignorePolicy) {
+			return this._ignorePolicy;
+		}
+		const folders = this._workspaceContextService.getWorkspace().folders;
+		const roots = collectAgentSearchRoots(
+			folders[0]?.uri,
+			formatWorkspaceFolderLinks(folders.map(f => ({ name: f.name, uri: f.uri }))),
+		);
+		const secrets = this._configurationService.getValue<string[]>(QuantumIDEAISettingId.IndexingSecretFileNames) ?? [];
+		const configured = this._configurationService.getValue<readonly string[]>(QuantumIDEAISettingId.IndexingExcludePatterns) ?? [];
+		const unifiedIgnore = this._configurationService.getValue<string>(QuantumIDEAISettingId.IndexingIgnoreFile) ?? '.quantumideignore';
+		const base = await loadQuantumIDEWorkspaceIgnorePolicy(
+			this._fileService,
+			roots,
+			new Set(QuantumIDEWorkspaceIndexExcludeNames),
+			secrets,
+			{ unifiedIgnoreFile: unifiedIgnore },
+		);
+		this._ignorePolicy = mergeQuantumIDEIndexingExcludePatterns(base, configured);
+		return this._ignorePolicy;
+	}
+
+	private _scheduleFileWatcherGraphRefresh(event: FileChangesEvent): void {
+		const changeCount = event.rawAdded.length + event.rawUpdated.length + event.rawDeleted.length;
+		const plan = planWorkspaceGraphFileWatcherRefresh({
+			changeCount,
+			graph: this._graph,
+			maxIncrementalChanges: QUANTUMIDE_FILE_WATCHER_MAX_INCREMENTAL_CHANGES,
+		});
+		if (plan.runIncremental) {
+			this._incrementalScheduler.schedule();
+		}
+		if (plan.runDebouncedFullRefresh) {
+			this._fileWatcherRefreshScheduler.schedule();
+		}
+	}
+
+	private async _runIncrementalGraphPatch(): Promise<void> {
+		if (!this._workspaceTrustManagementService.isWorkspaceTrusted()) {
+			return;
+		}
+		const event = this._lastFileChangeEvent;
+		const graph = this._graph;
+		const changeCount = event
+			? event.rawAdded.length + event.rawUpdated.length + event.rawDeleted.length
+			: 0;
+		const plan = planWorkspaceGraphFileWatcherRefresh({
+			changeCount,
+			graph,
+			maxIncrementalChanges: QUANTUMIDE_FILE_WATCHER_MAX_INCREMENTAL_CHANGES,
+		});
+		if (!event || !plan.runIncremental || !graph) {
+			if (plan.runDebouncedFullRefresh) {
+				this._fileWatcherRefreshScheduler.schedule();
+			}
+			return;
+		}
+		const start = Date.now();
+		const policy = await this._ensureIgnorePolicy();
+		let files = [...graph.files];
+		const manifests = [...graph.manifests];
+		for (const deleted of event.rawDeleted) {
+			const del = deleted.toString();
+			files = files.filter(f => f.uri !== del);
+		}
+		const upsertFile = async (resource: URI) => {
+			if (files.length >= (graph.status.fileLimit ?? MAX_INDEX_FILES)) {
+				return;
+			}
+			try {
+				const stat = await this._fileService.resolve(resource);
+				const folder = this._workspaceContextService.getWorkspace().folders.find(f =>
+					resource.fsPath.startsWith(f.uri.fsPath));
+				if (!folder || !stat.isFile) {
+					return;
+				}
+				const rel = this._workspaceRelativePath(folder, resource);
+				if (isQuantumIDEPathIgnored(rel, policy, 'index', stat.name)) {
+					return;
+				}
+				files.push({
+					uri: resource.toString(),
+					workspaceRelativePath: rel,
+					name: stat.name,
+					extension: extname(stat.name) || undefined,
+				});
+			} catch {
+				// skip
+			}
+		};
+		for (const added of event.rawAdded) {
+			await upsertFile(added);
+		}
+		for (const updated of event.rawUpdated) {
+			const key = updated.toString();
+			files = files.filter(f => f.uri !== key);
+			await upsertFile(updated);
+		}
+		const updatedGraph: IQuantumIDEWorkspaceGraph = {
+			...graph,
+			files,
+			manifests,
+			status: {
+				...graph.status,
+				generatedAt: new Date().toISOString(),
+				reason: `incremental patch (${changeCount} change(s))`,
+			},
+		};
+		this._storeGraph(updatedGraph);
+		this._fileWatcherRefreshScheduler.cancel();
+		this._logService.info(formatQuantumIDEWorkspaceDiscoveryLog({
+			component: 'workspace-graph',
+			operation: 'incremental-patch',
+			fileCount: files.length,
+			durationMs: Date.now() - start,
+		}));
+	}
+
+	private async _scanResource(
+		resource: URI,
+		state: IQuantumIDEScanState,
+		depth: number,
+		maxFiles: number,
+		excludedNames: ReadonlySet<string>,
+		maxDepth: number = MAX_SCAN_DEPTH,
+		policy?: IQuantumIDEWorkspaceIgnorePolicy,
+	): Promise<void> {
+		if (depth > maxDepth || state.files.length >= maxFiles) {
 			state.truncated = state.truncated || state.files.length >= maxFiles;
 			return;
 		}
@@ -208,7 +539,7 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 			return;
 		}
 		if (stat.isFile) {
-			this._addFile(stat, state);
+			this._addFile(stat, state, policy);
 			return;
 		}
 		if (!stat.isDirectory || !stat.children) {
@@ -224,19 +555,25 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 			if (excludedNames.has(child.name)) {
 				continue;
 			}
+			const childRel = this._workspaceRelativePath(state.workspaceFolder, child.resource);
+			if (policy && isQuantumIDEPathIgnored(childRel, policy, 'index', child.name)) {
+				state.ignoredPathCount++;
+				continue;
+			}
 			if (state.files.length >= maxFiles) {
 				state.truncated = true;
 				return;
 			}
-			await this._scanResource(child.resource, state, depth + 1, maxFiles, excludedNames);
+			await this._scanResource(child.resource, state, depth + 1, maxFiles, excludedNames, maxDepth, policy);
 		}
 	}
 
-	private _addFile(stat: IFileStat, state: IQuantumIDEScanState): void {
-		if (stat.name === '.env' || stat.name.endsWith('.pem') || stat.name.endsWith('.key')) {
+	private _addFile(stat: IFileStat, state: IQuantumIDEScanState, policy?: IQuantumIDEWorkspaceIgnorePolicy): void {
+		const workspaceRelativePath = this._workspaceRelativePath(state.workspaceFolder, stat.resource);
+		if (policy && isQuantumIDEPathIgnored(workspaceRelativePath, policy, 'index', stat.name)) {
+			state.ignoredPathCount++;
 			return;
 		}
-		const workspaceRelativePath = this._workspaceRelativePath(state.workspaceFolder, stat.resource);
 		state.files.push({
 			uri: stat.resource.toString(),
 			workspaceRelativePath,
@@ -309,7 +646,28 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		return getQuantumIDEManifestEcosystem(preferred ?? manifestKinds[0] ?? QuantumIDEManifestKind.Git);
 	}
 
-	private _formatWorkspaceGraph(graph: IQuantumIDEWorkspaceGraph): string[] {
+	private _formatWorkspaceGraphOtherRoots(graph: IQuantumIDEWorkspaceGraph, preferRoot: string, maxPerRoot: number): string[] {
+		const lines: string[] = [];
+		for (const folder of graph.folders) {
+			if (folder.name === preferRoot) {
+				continue;
+			}
+			const rootFiles = graph.files.filter(f => f.workspaceRelativePath.startsWith(`${folder.name}/`) || f.workspaceRelativePath === folder.name);
+			if (rootFiles.length === 0) {
+				continue;
+			}
+			lines.push(`- ${folder.name}:`);
+			for (const file of rootFiles.slice(0, maxPerRoot)) {
+				lines.push(`  - ${file.workspaceRelativePath}`);
+			}
+			if (rootFiles.length > maxPerRoot) {
+				lines.push(`  - …${rootFiles.length - maxPerRoot} more under ${folder.name}`);
+			}
+		}
+		return lines;
+	}
+
+	private _formatWorkspaceGraph(graph: IQuantumIDEWorkspaceGraph, preferRoot?: string, maxFiles = MAX_CONTEXT_FILES): string[] {
 		const lines: string[] = [
 			`Summary: ${summarizeQuantumIDEWorkspaceGraph(graph)}`,
 			`Generated: ${graph.status.generatedAt ?? 'not generated'} (${graph.status.reason ?? 'unknown reason'})`,
@@ -333,11 +691,23 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 			}
 		}
 		lines.push('Top indexed files:');
-		for (const file of graph.files.slice(0, Math.min(this._getMaxContextFiles(), MAX_CONTEXT_FILES))) {
+		const fileList = preferRoot
+			? [
+				...graph.files.filter(f => f.workspaceRelativePath.startsWith(`${preferRoot}/`) || f.workspaceRelativePath === preferRoot),
+				...graph.files.filter(f => !f.workspaceRelativePath.startsWith(`${preferRoot}/`) && f.workspaceRelativePath !== preferRoot),
+			]
+			: graph.files;
+		for (const file of fileList.slice(0, Math.min(this._getMaxContextFiles(), maxFiles))) {
 			lines.push(`- ${file.workspaceRelativePath}`);
 		}
-		if (graph.files.length > MAX_CONTEXT_FILES) {
-			lines.push(`- ...${graph.files.length - MAX_CONTEXT_FILES} more indexed files omitted.`);
+		if (fileList.length > maxFiles) {
+			lines.push(`- ...${fileList.length - maxFiles} more indexed files omitted.`);
+		}
+		if (graph.status.perRoot?.length) {
+			lines.push('Per-root scan summary:');
+			for (const root of graph.status.perRoot) {
+				lines.push(`- ${root.folderName}: ${root.filesIndexed} file(s)${root.truncated ? ' (truncated)' : ''}`);
+			}
 		}
 		return lines;
 	}
@@ -419,18 +789,6 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		return Math.max(1, configured);
 	}
 
-	private _getExcludedIndexNames(): ReadonlySet<string> {
-		const configured = this._configurationService.getValue<readonly string[]>(QuantumIDEAISettingId.IndexingExcludePatterns) ?? [];
-		const names = new Set(QuantumIDEWorkspaceIndexExcludeNames);
-		for (const item of configured) {
-			const trimmed = typeof item === 'string' ? item.trim() : '';
-			if (trimmed && !trimmed.includes('/') && !trimmed.includes('\\')) {
-				names.add(trimmed);
-			}
-		}
-		return names;
-	}
-
 	private _storeGraph(graph: IQuantumIDEWorkspaceGraph): void {
 		this._graph = graph;
 		this._storageService.store(QUANTUMIDE_AI_WORKSPACE_INDEX_STORAGE_KEY, JSON.stringify(graph), StorageScope.APPLICATION, StorageTarget.MACHINE);
@@ -444,7 +802,19 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		}
 		try {
 			const parsed = JSON.parse(raw) as IQuantumIDEWorkspaceGraph;
-			return parsed.version === 1 ? parsed : undefined;
+			if (parsed.version !== 1) {
+				return undefined;
+			}
+			const currentId = this._workspaceContextService.getWorkspace().id;
+			if (parsed.workspaceId && currentId && parsed.workspaceId !== currentId) {
+				this._logService.debug(formatQuantumIDEWorkspaceDiscoveryLog({
+					component: 'workspace-graph',
+					operation: 'cache-stale',
+					error: `workspaceId mismatch ${parsed.workspaceId} vs ${currentId}`,
+				}));
+				return undefined;
+			}
+			return parsed;
 		} catch {
 			return undefined;
 		}
@@ -471,7 +841,9 @@ export class QuantumIDEWorkspaceContextService extends Disposable implements IQu
 		if (value.length <= maxChars) {
 			return value;
 		}
-		return `${value.slice(0, Math.max(0, maxChars - 80))}\n\n[QuantumIDE workspace context truncated to ${maxChars} characters.]`;
+		const footer = `\n\n[QuantumIDE workspace context truncated to ${maxChars} characters.]`;
+		const bodyBudget = Math.max(0, maxChars - footer.length);
+		return `${clipQuantumIDEUtf16Safe(value, bodyBudget)}${footer}`;
 	}
 }
 

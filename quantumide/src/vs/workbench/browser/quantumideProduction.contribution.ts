@@ -91,11 +91,17 @@ registerAction2(class extends Action2 {
 			title: localize('quantumide.workspace.sessionLabel', 'Session label (optional)'),
 			placeHolder: localize('quantumide.workspace.sessionLabelPh', 'Before release…'),
 		});
-		const meta = await accessor.get(IQuantumIDEWorkspaceStateService).persistState(label ?? undefined);
+		const notifications = accessor.get(INotificationService);
+		const meta = await accessor.get(IQuantumIDEWorkspaceStateService).persistState(
+			typeof label === 'string' && label.trim() ? label.trim() : undefined,
+			{ captureWorkingSet: true, notifyOnFailure: true },
+		);
 		if (meta) {
-			accessor.get(INotificationService).info(
+			notifications.info(
 				localize('quantumide.workspace.sessionSaved', 'Workspace session saved ({0} files, {1}).', meta.openFileCount, new Date(meta.savedAt).toLocaleString()),
 			);
+		} else {
+			notifications.error(localize('quantumide.workspace.sessionSaveFailed', 'Could not save workspace session. Open a folder on disk, trust the workspace, and try again.'));
 		}
 	}
 });

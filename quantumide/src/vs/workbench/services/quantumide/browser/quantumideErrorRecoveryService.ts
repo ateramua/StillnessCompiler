@@ -9,6 +9,7 @@ import { localize } from '../../../../nls.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { isBenignQuantumIDERendererError } from '../../../../platform/quantumide/common/quantumideBenignErrors.js';
 import { redactQuantumIDESecrets } from '../../../../platform/quantumide/common/quantumideSecretRedaction.js';
 import {
 	IQuantumIDEErrorRecoveryService,
@@ -42,6 +43,9 @@ export class QuantumIDEErrorRecoveryService extends Disposable implements IQuant
 	}
 
 	report(report: IQuantumIDEErrorReport): void {
+		if (isBenignQuantumIDERendererError(report.message)) {
+			return;
+		}
 		const safe: IQuantumIDEErrorReport = {
 			...report,
 			message: redactQuantumIDESecrets(report.message),

@@ -32,6 +32,8 @@ export interface IQuantumIDEAstIndex {
 	readonly version: 1;
 	readonly generatedAt: string;
 	readonly symbols: readonly IQuantumIDEAstSymbolEntry[];
+	/** Count of symbols with Tree-sitter metadata when index was built. */
+	readonly treeSitterSymbolCount?: number;
 }
 
 export function buildSemanticIndex(documents: { path: string; text: string }[]): IQuantumIDESemanticIndex {
@@ -107,6 +109,10 @@ export function parseAstIndexJson(raw: string): IQuantumIDEAstIndex | undefined 
 
 export type QuantumIDEAstSymbolExtractor = (path: string, text: string, maxPerFile?: number) => readonly IQuantumIDEAstSymbolEntry[];
 
+export function countTreeSitterAstSymbols(symbols: readonly IQuantumIDEAstSymbolEntry[]): number {
+	return symbols.filter(s => s.metadata?.parser === 'tree-sitter-wasm').length;
+}
+
 export function buildAstIndex(
 	files: { path: string; text: string }[],
 	extractSymbols: QuantumIDEAstSymbolExtractor = extractAstSymbolsFromText,
@@ -115,9 +121,11 @@ export function buildAstIndex(
 	for (const file of files) {
 		symbols.push(...extractSymbols(file.path, file.text));
 	}
+	const treeSitterSymbolCount = countTreeSitterAstSymbols(symbols);
 	return {
 		version: 1,
 		generatedAt: new Date().toISOString(),
 		symbols,
+		treeSitterSymbolCount: treeSitterSymbolCount > 0 ? treeSitterSymbolCount : undefined,
 	};
 }

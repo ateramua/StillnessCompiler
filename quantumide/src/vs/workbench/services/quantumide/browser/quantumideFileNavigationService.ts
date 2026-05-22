@@ -9,6 +9,10 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { IEditorService } from '../../editor/common/editorService.js';
+import {
+	formatWorkspaceFolderLinks,
+	resolvePathAcrossWorkspaceRoots,
+} from '../../../../platform/quantumide/common/quantumideWorkspaceRoots.js';
 import { IQuantumIDEWorkspaceContextService } from '../common/quantumideWorkspaceContext.js';
 
 export interface IQuantumIDEFileTreeEntry {
@@ -76,15 +80,19 @@ export class QuantumIDEFileNavigationService implements IQuantumIDEFileNavigatio
 	}
 
 	private _resolvePath(path: string): URI | undefined {
-		const folder = this._workspaceContextService.getWorkspace().folders[0];
-		if (!folder) {
+		const folders = this._workspaceContextService.getWorkspace().folders;
+		if (folders.length === 0) {
 			return undefined;
 		}
 		if (path.startsWith('file://')) {
 			return URI.parse(path);
 		}
-		const clean = path.replace(/\\/g, '/').replace(/^\.\//, '');
-		return URI.joinPath(folder.uri, clean);
+		const links = formatWorkspaceFolderLinks(folders.map(f => ({ name: f.name, uri: f.uri })));
+		try {
+			return resolvePathAcrossWorkspaceRoots(folders[0]?.uri, links, path);
+		} catch {
+			return undefined;
+		}
 	}
 }
 

@@ -60,6 +60,8 @@ import { IChatRequestVariableEntry } from '../../common/attachments/chatVariable
 import { IChatChangesSummaryPart, IChatCodeCitations, IChatErrorDetailsPart, IChatReferences, IChatRendererContent, IChatRequestViewModel, IChatResponseViewModel, IChatViewModel, IChatWorkingProgress, isRequestVM, isResponseVM, IChatPendingDividerViewModel, isPendingDividerVM } from '../../common/model/chatViewModel.js';
 import { getNWords } from '../../common/model/chatWordCounter.js';
 import { ChatAgentLocation, ChatConfiguration, ChatModeKind, CollapsedToolsDisplayMode, ThinkingDisplayMode } from '../../common/constants.js';
+import { ChatPerfMark, markChat } from '../../common/chatPerf.js';
+import { scheduleChatPerfReflowProbe } from '../../common/chatPerfInstrumentation.js';
 import { ClickAnimation } from '../../../../../base/browser/ui/animations/animations.js';
 import { MarkHelpfulActionId } from '../actions/chatTitleActions.js';
 import { ChatTreeItem, IChatCodeBlockInfo, IChatFileTreeInfo, IChatListItemRendererOptions, IChatWidgetService } from '../chat.js';
@@ -1484,6 +1486,10 @@ export class ChatListItemRenderer extends Disposable implements ITreeRenderer<Ch
 			element.renderData = undefined;
 			templateData.rowContainer.classList.toggle('chat-response-loading', false);
 			this.renderChatResponseBasic(element, index, templateData);
+			if (element.isComplete) {
+				markChat(element.sessionResource, ChatPerfMark.MessageRenderComplete, { messageId: element.id });
+				scheduleChatPerfReflowProbe(element.sessionResource);
+			}
 			return;
 		}
 
@@ -1494,6 +1500,9 @@ export class ChatListItemRenderer extends Disposable implements ITreeRenderer<Ch
 		const contentIsAlreadyRendered = partsToRender.every(part => part === null);
 		if (!contentIsAlreadyRendered) {
 			this.renderChatContentDiff(partsToRender, contentForThisTurn.content, element, index, templateData);
+			const sessionResource = element.sessionResource;
+			markChat(sessionResource, ChatPerfMark.ChunkRendered, { messageId: element.id });
+			scheduleChatPerfReflowProbe(sessionResource);
 		}
 	}
 
